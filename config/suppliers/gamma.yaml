@@ -1,0 +1,12 @@
+supplier_id: supplier-gamma
+name: Gamma Europe
+currency: EUR
+reliability_score: "0.88"
+response_delay_ms: 0
+catalog:
+  ENGINE-001: {unit_price: "745.00", available_capacity: "50", lead_time_days: 18, minimum_order_quantity: "10", packaging_multiple: "10"}
+  FRAME-001: {unit_price: "420.00", available_capacity: "60", lead_time_days: 16, minimum_order_quantity: "10", packaging_multiple: "10"}
+  BRAKE-KIT-001: {unit_price: "155.00", available_capacity: "80", lead_time_days: 15, minimum_order_quantity: "10", packaging_multiple: "10"}
+  ECU-001: {unit_price: "215.00", available_capacity: "60", lead_time_days: 14, minimum_order_quantity: "10", packaging_multiple: "10"}
+ack_behavior: {mode: delivery_conflict}
+counter_behavior: {mode: accept_if_margin_at_least, minimum_margin_percent: "8.0"}

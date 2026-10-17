@@ -1,0 +1,12 @@
+supplier_id: supplier-alpha
+name: Alpha Components
+currency: USD
+reliability_score: "0.94"
+response_delay_ms: 0
+catalog:
+  ENGINE-001: {unit_price: "820.00", available_capacity: "100", lead_time_days: 14, minimum_order_quantity: "10", packaging_multiple: "5"}
+  FRAME-001: {unit_price: "475.00", available_capacity: "80", lead_time_days: 12, minimum_order_quantity: "5", packaging_multiple: "5"}
+  BRAKE-KIT-001: {unit_price: "180.00", available_capacity: "120", lead_time_days: 9, minimum_order_quantity: "10", packaging_multiple: "5"}
+  WIRING-001: {unit_price: "95.00", available_capacity: "90", lead_time_days: 8, minimum_order_quantity: "10", packaging_multiple: "5"}
+ack_behavior: {mode: accept_exactly}
+counter_behavior: {mode: accept_if_margin_at_least, minimum_margin_percent: "7.5"}

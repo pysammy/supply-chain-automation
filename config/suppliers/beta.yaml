@@ -1,0 +1,12 @@
+supplier_id: supplier-beta
+name: Beta Industrial
+currency: USD
+reliability_score: "0.98"
+response_delay_ms: 0
+catalog:
+  ENGINE-001: {unit_price: "875.00", available_capacity: "75", lead_time_days: 8, minimum_order_quantity: "5", packaging_multiple: "5"}
+  FRAME-001: {unit_price: "510.00", available_capacity: "100", lead_time_days: 7, minimum_order_quantity: "5", packaging_multiple: "5"}
+  ECU-001: {unit_price: "260.00", available_capacity: "100", lead_time_days: 6, minimum_order_quantity: "10", packaging_multiple: "5"}
+  WIRING-001: {unit_price: "102.00", available_capacity: "100", lead_time_days: 6, minimum_order_quantity: "10", packaging_multiple: "5"}
+ack_behavior: {mode: price_conflict}
+counter_behavior: {mode: accept_if_margin_at_least, minimum_margin_percent: "5.0"}
