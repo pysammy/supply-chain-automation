@@ -1,0 +1,17 @@
+.git
+.venv
+.env
+agent.py
+__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+htmlcov
+dist
+build
+private_keys.json
+agent_seeds.json
+*.seed
+*.pem
+*.key
+

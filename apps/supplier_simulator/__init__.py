@@ -1,0 +1,1 @@
+"""External supplier REST simulator."""

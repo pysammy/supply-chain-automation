@@ -1,0 +1,81 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "supplymesh-ai"
+version = "0.1.0"
+description = "Deterministic multi-agent procurement orchestration for ASI:One"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "alembic>=1.14,<2",
+  "fastapi>=0.115,<1",
+  "httpx>=0.28,<1",
+  "langgraph>=0.6,<2",
+  "langgraph-checkpoint-postgres>=3,<4",
+  "openai>=3.34.0",
+  "orjson>=3.10,<4",
+  "ortools>=9.11,<10",
+  "psycopg[binary]>=3.2,<4",
+  "pydantic>=2.10,<3",
+  "pydantic-settings>=2.7,<3",
+  "pyyaml>=6.0,<7",
+  "sentry-sdk[fastapi,httpx]>=2.20,<3",
+  "sqlalchemy>=2.0,<3",
+  "tenacity>=9.0,<10",
+  "uagents>=0.25.5,<0.26",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[dependency-groups]
+dev = [
+  "mypy>=1.14,<2",
+  "pytest>=8.3,<9",
+  "pytest-asyncio>=0.25,<1",
+  "pytest-cov>=6.0,<7",
+  "ruff>=0.9,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["supplymesh", "apps"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = [
+  "supplymesh.agents",
+  "supplymesh.domain",
+  "supplymesh.persistence",
+  "supplymesh.protocols",
+  "supplymesh.services",
+]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["ortools.*"]
+follow_imports = "skip"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["uagents.*", "uagents_core.*"]
+follow_imports = "skip"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["supplymesh.agents.*"]
+disallow_subclassing_any = false
+disallow_untyped_decorators = false
+
