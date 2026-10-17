@@ -1,0 +1,16 @@
+{
+  "product": {"sku": "MOTO-URBANX-2026", "name": "UrbanX Motorcycle", "version": 1, "unit": "EA"},
+  "bom_version": 1,
+  "components": [
+    {"component_sku": "ENGINE-001", "quantity_per": "1", "scrap_factor": "0", "unit": "EA"},
+    {"component_sku": "FRAME-001", "quantity_per": "1", "scrap_factor": "0.01", "unit": "EA"},
+    {"component_sku": "BATTERY-001", "quantity_per": "1", "scrap_factor": "0", "unit": "EA"},
+    {"component_sku": "WHEEL-FRONT-001", "quantity_per": "1", "scrap_factor": "0", "unit": "EA"},
+    {"component_sku": "WHEEL-REAR-001", "quantity_per": "1", "scrap_factor": "0", "unit": "EA"},
+    {"component_sku": "BRAKE-KIT-001", "quantity_per": "1", "scrap_factor": "0.02", "unit": "EA"},
+    {"component_sku": "ECU-001", "quantity_per": "1", "scrap_factor": "0", "unit": "EA"},
+    {"component_sku": "FUEL-TANK-001", "quantity_per": "1", "scrap_factor": "0", "unit": "EA"},
+    {"component_sku": "HEADLIGHT-001", "quantity_per": "1", "scrap_factor": "0", "unit": "EA"},
+    {"component_sku": "WIRING-001", "quantity_per": "1", "scrap_factor": "0.01", "unit": "EA"}
+  ]
+}

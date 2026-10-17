@@ -1,0 +1,17 @@
+{
+  "orders": [
+    {"external_ref": "QUARTERLY-2026-Q4", "product_sku": "MOTO-URBANX-2026", "quantity": "100", "required_by": "2026-11-15", "priority": "high", "status": "CONFIRMED"}
+  ],
+  "reservations": [
+    {"external_ref": "QUARTERLY-2026-Q4", "component_sku": "ENGINE-001", "quantity": "100"},
+    {"external_ref": "QUARTERLY-2026-Q4", "component_sku": "FRAME-001", "quantity": "101"},
+    {"external_ref": "QUARTERLY-2026-Q4", "component_sku": "BATTERY-001", "quantity": "100"},
+    {"external_ref": "QUARTERLY-2026-Q4", "component_sku": "WHEEL-FRONT-001", "quantity": "100"},
+    {"external_ref": "QUARTERLY-2026-Q4", "component_sku": "WHEEL-REAR-001", "quantity": "100"},
+    {"external_ref": "QUARTERLY-2026-Q4", "component_sku": "BRAKE-KIT-001", "quantity": "102"},
+    {"external_ref": "QUARTERLY-2026-Q4", "component_sku": "ECU-001", "quantity": "100"},
+    {"external_ref": "QUARTERLY-2026-Q4", "component_sku": "FUEL-TANK-001", "quantity": "100"},
+    {"external_ref": "QUARTERLY-2026-Q4", "component_sku": "HEADLIGHT-001", "quantity": "100"},
+    {"external_ref": "QUARTERLY-2026-Q4", "component_sku": "WIRING-001", "quantity": "101"}
+  ]
+}
