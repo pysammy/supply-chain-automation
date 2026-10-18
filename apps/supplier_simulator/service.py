@@ -16,19 +16,24 @@ from supplymesh.edi.x12_850 import parse_850
 from supplymesh.edi.x12_855 import AcknowledgmentLine, generate_855
 from supplymesh.edi.x12_860 import parse_860
 from supplymesh.edi.x12_865 import ChangeResponseLine, generate_865
+from supplymesh.persistence.supplier_history_repository import SupplierHistoryRepository
 
 
 class RfqService:
-    def __init__(self, profiles: dict[str, SupplierProfile]) -> None:
+    def __init__(
+        self, profiles: dict[str, SupplierProfile], history: SupplierHistoryRepository | None = None
+    ) -> None:
         self._base_profiles = profiles
         self.profiles = dict(profiles)
         self.scenario = "happy_path"
         self.rfq_attempts: dict[str, int] = {}
         self._responses: dict[tuple[str, str], SupplierQuote] = {}
-        self._po_responses: dict[tuple[str, str], SupplierTransactionAccepted] = {}
-        self._transactions: dict[str, SupplierTransactionStatus] = {}
-        self._change_responses: dict[tuple[str, str], SupplierTransactionAccepted] = {}
-        self._change_transactions: dict[str, ChangeTransactionStatus] = {}
+        self.history = history
+
+    def _history(self) -> SupplierHistoryRepository:
+        if self.history is None:
+            raise RuntimeError("supplier history database is not configured")
+        return self.history
 
     def reset(self) -> None:
         self.profiles = {
@@ -38,10 +43,6 @@ class RfqService:
         self.scenario = "happy_path"
         self.rfq_attempts.clear()
         self._responses.clear()
-        self._po_responses.clear()
-        self._transactions.clear()
-        self._change_responses.clear()
-        self._change_transactions.clear()
 
     def set_scenario(self, scenario: str) -> None:
         allowed = {
@@ -153,14 +154,16 @@ class RfqService:
         submission: PurchaseOrderSubmission,
         idempotency_key: str,
     ) -> SupplierTransactionAccepted:
-        key = (supplier_id, idempotency_key)
-        if key in self._po_responses:
-            return self._po_responses[key]
+        existing = self._history().find(supplier_id, submission, idempotency_key)
+        if existing is not None:
+            return SupplierTransactionAccepted.model_validate(existing)
         profile = self.profiles[supplier_id]
         document = parse_850(submission.x12)
         beg = next(segment for segment in document.segments if segment[0] == "BEG")
         version = next(segment for segment in document.segments if segment[:2] == ("REF", "PV"))
         currency = next(segment for segment in document.segments if segment[0] == "CUR")
+        if beg[3] != submission.po_number or int(version[2]) != submission.po_version:
+            raise ValueError("submission PO number/version does not match the X12 document")
         requested_date = next(
             segment for segment in document.segments if segment[:2] == ("DTM", "002")
         )[2]
@@ -168,11 +171,23 @@ class RfqService:
             f"{requested_date[:4]}-{requested_date[4:6]}-{requested_date[6:]}"
         )
         lines: list[AcknowledgmentLine] = []
+        original_requested_date = promised.isoformat()
+        order_lines = []
         for segment in document.segments:
             if segment[0] != "PO1":
                 continue
             quantity = Decimal(segment[2])
             price = Decimal(segment[4])
+            order_lines.append(
+                {
+                    "line_number": int(segment[1]),
+                    "component_sku": segment[7],
+                    "quantity": str(quantity),
+                    "unit_price": str(price),
+                    "unit": segment[3],
+                    "requested_date": original_requested_date,
+                }
+            )
             mode = profile.ack_behavior["mode"]
             if mode == "price_conflict":
                 price = (price * Decimal("1.03")).quantize(Decimal("0.01"))
@@ -209,18 +224,27 @@ class RfqService:
             poll_url=f"/api/v1/suppliers/{supplier_id}/purchase-orders/{transaction_id}",
             estimated_ready_at=datetime.now(UTC),
         )
-        self._po_responses[key] = accepted
-        self._transactions[transaction_id] = SupplierTransactionStatus(
+        status = SupplierTransactionStatus(
             status="ACKNOWLEDGED",
             document_type="855",
             x12="MALFORMED-X12" if self.scenario == "malformed_acknowledgment" else ack,
         )
-        return accepted
+        saved = self._history().save(
+            supplier_id=supplier_id,
+            submission=submission,
+            idempotency_key=idempotency_key,
+            accepted=accepted.model_dump(mode="json"),
+            status=status.model_dump(mode="json"),
+            currency=currency[2],
+            lines=order_lines,
+            outcome="ACKNOWLEDGED",
+        )
+        return SupplierTransactionAccepted.model_validate(saved)
 
     def po_status(self, supplier_id: str, transaction_id: str) -> SupplierTransactionStatus:
-        if supplier_id not in self.profiles or transaction_id not in self._transactions:
-            raise KeyError(transaction_id)
-        return self._transactions[transaction_id]
+        return SupplierTransactionStatus.model_validate(
+            self._history().status(supplier_id, transaction_id, "850")
+        )
 
     def submit_change_order(
         self,
@@ -228,11 +252,13 @@ class RfqService:
         submission: ChangeOrderSubmission,
         idempotency_key: str,
     ) -> SupplierTransactionAccepted:
-        key = (supplier_id, idempotency_key)
-        if key in self._change_responses:
-            return self._change_responses[key]
+        existing = self._history().find(supplier_id, submission, idempotency_key)
+        if existing is not None:
+            return SupplierTransactionAccepted.model_validate(existing)
         profile = self.profiles[supplier_id]
         change = parse_860(submission.x12)
+        if change.po_number != submission.po_number or change.po_version != submission.po_version:
+            raise ValueError("submission PO number/version does not match the X12 document")
         accepted_change = not profile.counter_behavior["mode"].startswith("reject")
         code = "IA" if accepted_change else "IR"
         response_lines = tuple(
@@ -261,16 +287,35 @@ class RfqService:
             poll_url=f"/api/v1/suppliers/{supplier_id}/change-orders/{transaction_id}",
             estimated_ready_at=datetime.now(UTC),
         )
-        self._change_responses[key] = accepted
-        self._change_transactions[transaction_id] = ChangeTransactionStatus(
+        status = ChangeTransactionStatus(
             status="ACKNOWLEDGED", document_type="865", x12=response_x12
         )
-        return accepted
+        saved = self._history().save(
+            supplier_id=supplier_id,
+            submission=submission,
+            idempotency_key=idempotency_key,
+            accepted=accepted.model_dump(mode="json"),
+            status=status.model_dump(mode="json"),
+            currency=change.currency,
+            lines=[
+                {
+                    "line_number": line.line_number,
+                    "component_sku": line.component_sku,
+                    "quantity": str(line.quantity),
+                    "unit_price": str(line.maximum_unit_price),
+                    "unit": line.unit,
+                    "requested_date": line.requested_date.isoformat(),
+                }
+                for line in change.lines
+            ],
+            outcome="CHANGE_ACCEPTED" if accepted_change else "CHANGE_REJECTED",
+        )
+        return SupplierTransactionAccepted.model_validate(saved)
 
     def change_status(self, supplier_id: str, transaction_id: str) -> ChangeTransactionStatus:
-        if supplier_id not in self.profiles or transaction_id not in self._change_transactions:
-            raise KeyError(transaction_id)
-        return self._change_transactions[transaction_id]
+        return ChangeTransactionStatus.model_validate(
+            self._history().status(supplier_id, transaction_id, "860")
+        )
 
 
 def stable_rfq_key(workflow_id: str, supplier_id: str, request: RfqRequest) -> str:

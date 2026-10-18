@@ -83,6 +83,8 @@ def build_company_agents(
     publish_manifests: bool = True,
     supplier_base_url: str = "http://localhost:8001",
     supplier_api_key: str = "",
+    manufacturer_id: str = "manufacturer-demo",
+    manufacturer_name: str = "Demo Manufacturer",
     supplier_ids: tuple[str, ...] = ("supplier-alpha", "supplier-beta", "supplier-gamma"),
     http_connect_timeout_seconds: float = 3,
     http_read_timeout_seconds: float = 10,
@@ -145,7 +147,7 @@ def build_company_agents(
             (
                 "Supplier quotations and capacity for Alpha, Beta and Gamma. "
                 "Routes approved company-agent PO/change requests to supplier REST"
-                " tools. Public chat supports inquiries only."
+                " tools. Public chat supports quotations, capacity and read-only order history."
             ),
         ),
     }
@@ -216,7 +218,13 @@ def build_company_agents(
 
     def procurement_service(ctx: Context) -> ProcurementAgentService:
         service = ProcurementAgentService(
-            SupplierAgentClient(ctx, supplier.address, rpc_timeout),
+            SupplierAgentClient(
+                ctx,
+                supplier.address,
+                rpc_timeout,
+                manufacturer_id=manufacturer_id,
+                manufacturer_name=manufacturer_name,
+            ),
             journal,
             procurement_repository,
             poll_interval_seconds=ack_poll_interval_seconds,

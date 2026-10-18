@@ -31,7 +31,9 @@ def headers(key: str = "test-key") -> dict[str, str]:
 
 
 def test_three_supplier_profiles_return_distinct_rest_quotes() -> None:
-    client = TestClient(create_app(api_key="test-key", admin_api_key="admin-key"))
+    client = TestClient(
+        create_app(database_url="sqlite://", api_key="test-key", admin_api_key="admin-key")
+    )
     responses = [
         client.post(f"/api/v1/suppliers/{supplier}/rfqs", json=request_payload(), headers=headers())
         for supplier in ("supplier-alpha", "supplier-beta", "supplier-gamma")
@@ -44,7 +46,9 @@ def test_three_supplier_profiles_return_distinct_rest_quotes() -> None:
 
 
 def test_rfq_idempotency_returns_original_response() -> None:
-    client = TestClient(create_app(api_key="test-key", admin_api_key="admin-key"))
+    client = TestClient(
+        create_app(database_url="sqlite://", api_key="test-key", admin_api_key="admin-key")
+    )
     first = client.post(
         "/api/v1/suppliers/supplier-alpha/rfqs", json=request_payload(), headers=headers()
     )
@@ -55,7 +59,9 @@ def test_rfq_idempotency_returns_original_response() -> None:
 
 
 def test_authentication_and_required_correlation_headers() -> None:
-    client = TestClient(create_app(api_key="test-key", admin_api_key="admin-key"))
+    client = TestClient(
+        create_app(database_url="sqlite://", api_key="test-key", admin_api_key="admin-key")
+    )
     assert (
         client.post(
             "/api/v1/suppliers/supplier-alpha/rfqs", json=request_payload(), headers=headers("bad")

@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     procurement_agent_seed: SecretStr | None = None
     acknowledgment_agent_seed: SecretStr | None = None
     supplier_agent_seed: SecretStr | None = None
+    manufacturer_id: str = Field(
+        default="manufacturer-demo", min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$"
+    )
+    manufacturer_name: str = Field(default="Demo Manufacturer", min_length=1, max_length=255)
     payment_agent_seed: SecretStr | None = None
     stripe_secret_key: SecretStr | None = None
     stripe_publishable_key: str = ""

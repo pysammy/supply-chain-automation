@@ -347,3 +347,41 @@ class AuditEventRecord(Base):
     before_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     after_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SupplierOrderHistoryRecord(Base):
+    __tablename__ = "supplier_order_history"
+    __table_args__ = (
+        UniqueConstraint(
+            "manufacturer_id",
+            "supplier_id",
+            "document_type",
+            "idempotency_key",
+            name="uq_supplier_history_request",
+        ),
+        UniqueConstraint(
+            "manufacturer_id",
+            "supplier_id",
+            "po_number",
+            "po_version",
+            name="uq_supplier_history_po_version",
+        ),
+    )
+
+    transaction_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    manufacturer_id: Mapped[str] = mapped_column(String(100), index=True)
+    manufacturer_name: Mapped[str] = mapped_column(String(255))
+    supplier_id: Mapped[str] = mapped_column(String(100), index=True)
+    document_type: Mapped[str] = mapped_column(String(3))
+    idempotency_key: Mapped[str] = mapped_column(String(255))
+    payload_hash: Mapped[str] = mapped_column(String(64))
+    po_number: Mapped[str] = mapped_column(String(100))
+    po_version: Mapped[int] = mapped_column(Integer)
+    currency: Mapped[str] = mapped_column(String(3))
+    total: Mapped[Decimal] = mapped_column(Numeric(20, 4))
+    lines: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
+    x12: Mapped[str] = mapped_column(Text)
+    accepted_response: Mapped[dict[str, Any]] = mapped_column(JSON)
+    status_response: Mapped[dict[str, Any]] = mapped_column(JSON)
+    outcome: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

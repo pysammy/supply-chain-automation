@@ -48,6 +48,24 @@ class SupplierClient:
             result: dict[str, Any] = response.json()
             return result
 
+    async def get_order_history(
+        self, *, manufacturer_id: str | None = None, supplier_id: str | None = None, offset: int = 0
+    ) -> dict[str, Any]:
+        params: dict[str, str | int] = {"offset": offset}
+        if manufacturer_id:
+            params["manufacturer_id"] = manufacturer_id
+        if supplier_id:
+            params["supplier_id"] = supplier_id
+        async with httpx.AsyncClient(
+            base_url=self.base_url, timeout=self.timeout, transport=self.transport
+        ) as client:
+            response = await client.get(
+                "/api/v1/order-history", params=params, headers={"X-API-Key": self.api_key}
+            )
+            response.raise_for_status()
+            result: dict[str, Any] = response.json()
+            return result
+
     async def submit_rfq(
         self,
         supplier_id: str,

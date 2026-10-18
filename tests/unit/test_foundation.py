@@ -31,13 +31,19 @@ def test_agent_readiness_returns_503_when_database_is_unavailable(monkeypatch) -
 
 
 def test_supplier_health_and_readiness() -> None:
-    client = TestClient(create_app(api_key="test-api-key", admin_api_key="test-admin-key"))
+    client = TestClient(
+        create_app(database_url="sqlite://", api_key="test-api-key", admin_api_key="test-admin-key")
+    )
     assert client.get("/health").json()["status"] == "ok"
     assert client.get("/ready").json() == {
         "status": "ready",
         "service": "supplier-simulator",
     }
-    unconfigured = TestClient(create_app())
+    unconfigured = TestClient(
+        create_app(
+            database_url="sqlite://",
+        )
+    )
     response = unconfigured.get("/ready")
     assert response.status_code == 503
     assert response.json()["status"] == "not_ready"

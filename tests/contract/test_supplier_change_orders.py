@@ -10,7 +10,9 @@ from supplymesh.edi.x12_865 import parse_865
 
 
 def test_counterproposal_is_idempotent_and_supplier_returns_accepted_865() -> None:
-    client = TestClient(create_app(api_key="test-key", admin_api_key="admin-key"))
+    client = TestClient(
+        create_app(database_url="sqlite://", api_key="test-key", admin_api_key="admin-key")
+    )
     payload = {
         "message_id": str(uuid4()),
         "document_type": "860",

@@ -39,7 +39,9 @@ def po_payload() -> dict[str, object]:
 
 
 def test_po_submission_is_idempotent_and_returns_parseable_855() -> None:
-    client = TestClient(create_app(api_key="test-key", admin_api_key="admin-key"))
+    client = TestClient(
+        create_app(database_url="sqlite://", api_key="test-key", admin_api_key="admin-key")
+    )
     headers = {
         "X-API-Key": "test-key",
         "Idempotency-Key": "purchase-order-key-000001",

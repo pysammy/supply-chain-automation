@@ -44,7 +44,14 @@ class ApprovalRecord(DomainModel):
     reason: str | None = None
 
 
-class PurchaseOrderSubmission(DomainModel):
+class ManufacturerSubmission(DomainModel):
+    manufacturer_id: str = Field(
+        default="manufacturer-demo", min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$"
+    )
+    manufacturer_name: str = Field(default="Demo Manufacturer", min_length=1, max_length=255)
+
+
+class PurchaseOrderSubmission(ManufacturerSubmission):
     message_id: UUID
     document_type: Literal["850"] = "850"
     po_number: str
@@ -66,7 +73,7 @@ class SupplierTransactionStatus(DomainModel):
     x12: str | None = None
 
 
-class ChangeOrderSubmission(DomainModel):
+class ChangeOrderSubmission(ManufacturerSubmission):
     message_id: UUID
     document_type: Literal["860"] = "860"
     po_number: str

@@ -37,6 +37,8 @@ def main() -> None:
         publish_agent_details=settings.publish_agent_details,
         mailbox=settings.agent_mailbox,
         supplier_base_url=settings.supplier_simulator_base_url,
+        manufacturer_id=settings.manufacturer_id,
+        manufacturer_name=settings.manufacturer_name,
         supplier_api_key=(
             settings.supplier_api_key.get_secret_value() if settings.supplier_api_key else ""
         ),

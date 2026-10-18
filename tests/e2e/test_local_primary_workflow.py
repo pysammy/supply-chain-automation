@@ -67,7 +67,7 @@ async def set_scenario(app, name: str) -> None:
 
 @pytest.mark.asyncio
 async def test_shortage_quotes_optimization_approval_po_and_exact_ack_complete() -> None:
-    app = create_app(api_key="api", admin_api_key="admin")
+    app = create_app(database_url="sqlite://", api_key="api", admin_api_key="admin")
     await set_scenario(app, "happy_path")
     client = SupplierClient(
         base_url="http://test",
@@ -131,7 +131,7 @@ async def test_shortage_quotes_optimization_approval_po_and_exact_ack_complete()
 
 @pytest.mark.asyncio
 async def test_price_conflict_human_counterproposal_and_accepted_865() -> None:
-    app = create_app(api_key="api", admin_api_key="admin")
+    app = create_app(database_url="sqlite://", api_key="api", admin_api_key="admin")
     await set_scenario(app, "price_conflict")
     client = SupplierClient(
         base_url="http://test", api_key="api", transport=httpx.ASGITransport(app=app)
@@ -203,7 +203,7 @@ async def test_price_conflict_human_counterproposal_and_accepted_865() -> None:
 
 @pytest.mark.asyncio
 async def test_real_supplier_boundary_all_failures_pause_without_inventing_quotes() -> None:
-    app = create_app(api_key="api", admin_api_key="admin")
+    app = create_app(database_url="sqlite://", api_key="api", admin_api_key="admin")
     await set_scenario(app, "supplier_unavailable")
     client = SupplierClient(
         base_url="http://test",

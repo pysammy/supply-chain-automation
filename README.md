@@ -58,6 +58,11 @@ accept workflow requests only from the Orchestrator. Supplier tool calls accept 
 Procurement for RFQs/capacity and only Procurement for PO/change execution and status.
 The optional Payment Agent also accepts requests only from the Orchestrator.
 
+Supplier purchase/change-order history is persisted separately in PostgreSQL. Ask
+`@sm-supplier show purchase order history` for a read-only card with manufacturer, supplier,
+items, totals and acknowledgment status, ten records per page. See
+[supplier history](docs/supplier-history.md) for configuration, filters and deployment.
+
 Each of the six identities requires its own environment-only seed. The host rejects missing or duplicate seeds.
 Payments require a seventh unique seed and Stripe keys; leaving that seed blank keeps the existing
 six-agent flow. See [payment setup and behavior](docs/payments.md).
@@ -266,7 +271,8 @@ approved terms for a multi-line PO; custom per-line negotiation requires operato
 
 The Supplier Agent has its own public inquiry card. It supports structured `supplier_inquiry`
 submissions with `supplier_id`, `component_sku`, `operation` (`rfq` or `capacity`), and quotation
-`quantity`/`required_by`. Public chat cannot submit POs, changes, or retrieve private transactions.
+`quantity`/`required_by`. Public chat also provides read-only order-history summaries; it cannot
+submit POs, changes, or retrieve raw transaction documents.
 All six profiles use the existing Agentverse publication/mailbox configuration; live registration
 and ASI:One discovery must still be verified after deployment.
 

@@ -13,7 +13,7 @@ from supplymesh.services.sourcing_service import normalize_quotes
 
 
 def test_first_call_failure_scenario_recovers_and_admin_auth_is_required() -> None:
-    client = TestClient(create_app(api_key="api", admin_api_key="admin"))
+    client = TestClient(create_app(database_url="sqlite://", api_key="api", admin_api_key="admin"))
     assert (
         client.post(
             "/api/v1/demo/scenario/first_call_timeout_then_success",
@@ -68,7 +68,7 @@ def test_catalog_quotes_cover_full_demo_bom_and_produce_feasible_plans() -> None
             for index, sku in enumerate(shortages, start=1)
         ],
     }
-    client = TestClient(create_app(api_key="api", admin_api_key="admin"))
+    client = TestClient(create_app(database_url="sqlite://", api_key="api", admin_api_key="admin"))
     quotes = []
     for supplier in ("supplier-alpha", "supplier-beta", "supplier-gamma"):
         response = client.post(

@@ -1,16 +1,34 @@
 import os
 
 from fastapi import FastAPI, Header, HTTPException, Query, Response, status
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
+from apps.agent_host.settings import get_settings
 from apps.supplier_simulator.config import load_supplier_profiles
 from apps.supplier_simulator.service import RfqService
 from supplymesh.domain.procurement import ChangeOrderSubmission, PurchaseOrderSubmission
 from supplymesh.domain.sourcing import RfqRequest
+from supplymesh.persistence.orm_models import SupplierOrderHistoryRecord
+from supplymesh.persistence.supplier_history_repository import SupplierHistoryRepository
 
 
-def create_app(*, api_key: str | None = None, admin_api_key: str | None = None) -> FastAPI:
+def create_app(
+    *, api_key: str | None = None, admin_api_key: str | None = None, database_url: str | None = None
+) -> FastAPI:
     application = FastAPI(title="SupplyMesh Supplier Simulator", version="0.1.0")
-    service = RfqService(load_supplier_profiles())
+    url = database_url or get_settings().database_url
+    engine = (
+        create_engine(url, poolclass=StaticPool, connect_args={"check_same_thread": False})
+        if url.startswith("sqlite")
+        else create_engine(url, pool_pre_ping=True)
+    )
+    # SQLite is also useful for an isolated lightweight deployment/test; PostgreSQL uses Alembic.
+    if url.startswith("sqlite"):
+        SupplierOrderHistoryRecord.__table__.create(engine, checkfirst=True)
+    history = SupplierHistoryRepository(sessionmaker(engine))
+    service = RfqService(load_supplier_profiles(), history)
     expected_api_key = api_key or os.getenv("SUPPLIER_API_KEY")
     expected_admin_key = admin_api_key or os.getenv("SUPPLIER_ADMIN_API_KEY")
     app_env = os.getenv("APP_ENV", "development")
@@ -38,6 +56,20 @@ def create_app(*, api_key: str | None = None, admin_api_key: str | None = None) 
             response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
             return {"status": "not_ready", "reason": "required API keys are not configured"}
         return {"status": "ready", "service": "supplier-simulator"}
+
+    @application.get("/api/v1/order-history")
+    def order_history(
+        manufacturer_id: str | None = Query(default=None, min_length=1, max_length=100),
+        supplier_id: str | None = Query(default=None, min_length=1, max_length=100),
+        offset: int = Query(default=0, ge=0, le=100000),
+        x_api_key: str | None = Header(default=None),
+    ) -> dict[str, object]:
+        authenticate(x_api_key)
+        if supplier_id is not None and supplier_id not in service.profiles:
+            raise HTTPException(status_code=404, detail="supplier not found")
+        return history.history(
+            manufacturer_id=manufacturer_id, supplier_id=supplier_id, offset=offset
+        )
 
     @application.get("/api/v1/suppliers/{supplier_id}/capacity")
     def capacity(

@@ -75,7 +75,7 @@ def approve(payload, decision_type):
 
 @pytest.mark.asyncio
 async def test_real_uagent_supplier_roundtrip_three_profiles_and_edi(monkeypatch):
-    app = create_app(api_key="test-api", admin_api_key="test-admin")
+    app = create_app(database_url="sqlite://", api_key="test-api", admin_api_key="test-admin")
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
         (
@@ -230,7 +230,7 @@ async def test_real_uagent_supplier_roundtrip_three_profiles_and_edi(monkeypatch
 
 @pytest.mark.asyncio
 async def test_supplier_chat_inquiries_call_backend_but_cannot_order():
-    app = create_app(api_key="test-api", admin_api_key="test-admin")
+    app = create_app(database_url="sqlite://", api_key="test-api", admin_api_key="test-admin")
     calls = []
     delegate = httpx.ASGITransport(app=app)
 

@@ -8,9 +8,9 @@ means the cited automated test or reproducible command passed; unchecked items a
 ## Executed locally
 
 - [x] Ruff formatting and linting: `uv run ruff format --check . && uv run ruff check .`
-- [x] Strict typing for 47 agent/domain/persistence/protocol/service source files:
+- [x] Strict typing for 48 agent/domain/persistence/protocol/service source files:
   `.venv/bin/mypy`.
-- [x] Automated suite: 157 passed with `.venv/bin/python -m pytest -q
+- [x] Automated suite: 185 passed with `.venv/bin/python -m pytest -q
   --cov=supplymesh --cov=apps --cov-report=term:skip-covered`.
 - [x] Exception cards identify the supplier and PO, and map each discrepancy's PO line number to
   its component SKU. Pending exception cards can be redisplayed without changing workflow state.
@@ -23,6 +23,14 @@ means the cited automated test or reproducible command passed; unchecked items a
 - [x] Supplier REST quotations cover every component in the demo motorcycle BOM; a regression
   sources 20 of each component and verifies all five plans cover every shortage.
 - [x] Full `supplymesh` plus `apps` source coverage: 90% (`pytest-cov`).
+- [x] Supplier history: new POs/changes persist manufacturer identity, original terms and supplier
+  responses. Restart/reset replay, filters, pagination, changed-term rejection, atomic failure,
+  and direct public Supplier history cards are covered through real HTTP/protocol handlers.
+- [x] Migration `0008` upgrade/downgrade/re-upgrade and schema parity passed in an isolated
+  PostgreSQL database. Concurrent identical submissions returned one saved transaction; restart
+  and scenario reset retained history and acknowledgment status. The demo database was untouched.
+- [ ] New supplier history cards rendered live in ASI:One after deploying migration `0008` and
+  rebuilding the supplier simulator and agent host. See [supplier history](supplier-history.md).
 - [x] Optional payment collection: mocked Stripe checks cover explicit checkout approval,
   restart recovery, duplicate confirmations, lost callbacks, amount/currency/workflow validation,
   unauthorized requests, expired sessions, and database failure before receipt confirmation.

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Literal
@@ -25,11 +26,13 @@ from supplymesh.agents.supplier_transport import (
     tool_request,
 )
 from supplymesh.cards.renderer import parse_card_selection, render_card
+from supplymesh.cards.supplier_history import history_filters, supplier_history_card
 from supplymesh.clients.supplier_client import SupplierClient
 from supplymesh.domain.models import DomainModel
 from supplymesh.domain.procurement import (
     ChangeOrderSubmission,
     ChangeTransactionStatus,
+    ManufacturerSubmission,
     PurchaseOrderSubmission,
     SupplierTransactionAccepted,
     SupplierTransactionStatus,
@@ -50,6 +53,14 @@ class SupplierInquiry(CapacityLookup):
     operation: Literal["rfq", "capacity"] = "rfq"
     quantity: Decimal = Field(default=Decimal("1"), gt=0)
     required_by: date | None = None
+
+
+class HistoryInquiry(DomainModel):
+    manufacturer_id: str | None = Field(
+        default=None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$"
+    )
+    supplier_id: str | None = None
+    offset: int = Field(default=0, ge=0, le=100000)
 
 
 class SupplierAgentService:
@@ -112,6 +123,11 @@ class SupplierAgentService:
         )
         return change_status.model_dump(mode="json")
 
+    async def history(self, inquiry: HistoryInquiry) -> dict[str, Any]:
+        if inquiry.supplier_id is not None and inquiry.supplier_id not in self.supplier_ids:
+            raise ValueError("unknown supplier profile")
+        return await self.client.get_order_history(**inquiry.model_dump())
+
 
 def build_supplier_protocol(
     service: SupplierAgentService, *, sourcing_address: str, procurement_address: str
@@ -159,10 +175,21 @@ def build_supplier_protocol(
 class SupplierAgentClient:
     """Supplier gateway using signed uAgent request/reply messages instead of HTTP."""
 
-    def __init__(self, ctx: Context, address: str, timeout: int = 60) -> None:
+    def __init__(
+        self,
+        ctx: Context,
+        address: str,
+        timeout: int = 60,
+        *,
+        manufacturer_id: str = "manufacturer-demo",
+        manufacturer_name: str = "Demo Manufacturer",
+    ) -> None:
         self.ctx = ctx
         self.address = address
         self.timeout = timeout
+        self.manufacturer = ManufacturerSubmission(
+            manufacturer_id=manufacturer_id, manufacturer_name=manufacturer_name
+        )
         # uAgents has one pending reply per sender/destination/session. Serialize the
         # RFQs sharing this context so simultaneous profiles cannot overwrite it.
         self._lock = asyncio.Lock()
@@ -214,6 +241,7 @@ class SupplierAgentClient:
         idempotency_key: str,
         correlation_id: str,
     ) -> SupplierTransactionAccepted:
+        submission = submission.model_copy(update=self.manufacturer.model_dump())
         return SupplierTransactionAccepted.model_validate_json(
             await self._call(
                 "submit_po",
@@ -244,6 +272,7 @@ class SupplierAgentClient:
         idempotency_key: str,
         correlation_id: str,
     ) -> SupplierTransactionAccepted:
+        submission = submission.model_copy(update=self.manufacturer.model_dump())
         return SupplierTransactionAccepted.model_validate_json(
             await self._call(
                 "submit_change",
@@ -316,7 +345,8 @@ def build_supplier_chat_protocol(service: SupplierAgentService) -> Protocol:
             + ", ".join(service.supplier_ids)
             + (
                 ". Use the form for quotations or capacity. Purchase orders and "
-                "changes must go through the manufacturing Orchestrator."
+                "changes must go through the manufacturing Orchestrator. "
+                "Ask 'show purchase order history' to review recorded orders."
             )
         )
         try:
@@ -326,13 +356,71 @@ def build_supplier_chat_protocol(service: SupplierAgentService) -> Protocol:
                 if isinstance(item, TextContent)
             ]
             selection = next((item for item in reversed(selections) if item is not None), None)
+            if selection is not None and selection.action == "dismiss_card":
+                return
+            if selection is not None and selection.action == "supplier_history_filters":
+                await ctx.send(
+                    sender,
+                    ChatMessage(
+                        timestamp=datetime.now(UTC),
+                        content=[
+                            TextContent(
+                                text="Filter by manufacturer ID or supplier; blank means all."
+                            ),
+                            MetadataContent(
+                                metadata=history_filters(service.supplier_ids).metadata()
+                            ),
+                        ],
+                    ),
+                )
+                return
+            raw_text = " ".join(item.text for item in msg.content if isinstance(item, TextContent))
+            history_requested = selection is None and re.search(
+                r"\b(history|past orders|previous orders|placed orders)\b", raw_text, re.IGNORECASE
+            )
+            if (
+                selection is not None and selection.action == "supplier_history"
+            ) or history_requested:
+                values = dict(selection.values) if selection is not None else {}
+                if selection is None:
+                    manufacturer = re.search(
+                        r"\bmanufacturer\s+([A-Za-z0-9_-]+)", raw_text, re.IGNORECASE
+                    )
+                    if manufacturer:
+                        values["manufacturer_id"] = manufacturer[1]
+                    suppliers = [item for item in service.supplier_ids if item in raw_text.lower()]
+                    if len(suppliers) == 1:
+                        values["supplier_id"] = suppliers[0]
+                history_inquiry = HistoryInquiry.model_validate(
+                    {k: v for k, v in values.items() if v not in (None, "")}
+                )
+                page = await service.history(history_inquiry)
+                result_card = supplier_history_card(
+                    page, history_inquiry.model_dump(exclude_none=True)
+                )
+                await ctx.send(
+                    sender,
+                    ChatMessage(
+                        timestamp=datetime.now(UTC),
+                        content=[
+                            TextContent(
+                                text=f"Supplier history: {len(page['items'])} record(s). "
+                                "POs and changes are separate records; totals are not additive."
+                            ),
+                            MetadataContent(metadata=result_card.metadata()),
+                        ],
+                    ),
+                )
+                return
             if selection is not None:
                 if selection.action not in {
                     "supplier_inquiry",
                     "supplier_rfq",
                     "supplier_capacity",
                 }:
-                    raise ValueError("Only quotation and capacity inquiries are available in chat.")
+                    raise ValueError(
+                        "Only quotations, capacity and read-only history are available in chat."
+                    )
                 inquiry = SupplierInquiry.model_validate(
                     {
                         key: value
@@ -376,8 +464,9 @@ def build_supplier_chat_protocol(service: SupplierAgentService) -> Protocol:
                 text = json.dumps(result, indent=2)
         except Exception:
             text = (
-                "The inquiry could not be completed. Check the supplier, SKU, "
-                "quantity and date. Chat cannot submit purchase orders or changes."
+                "The inquiry could not be completed. Check the filters, supplier, SKU, "
+                "quantity and date, or retry if the backend is unavailable. "
+                "Chat cannot submit purchase orders or changes."
             )
         await ctx.send(
             sender,

@@ -127,6 +127,8 @@ def main() -> None:
         publish_manifests=False,
         supplier_base_url=settings.supplier_simulator_base_url,
         supplier_api_key=supplier_api_key,
+        manufacturer_id=settings.manufacturer_id,
+        manufacturer_name=settings.manufacturer_name,
         http_connect_timeout_seconds=settings.http_connect_timeout_seconds,
         http_read_timeout_seconds=settings.http_read_timeout_seconds,
         http_max_retries=settings.http_max_retries,
