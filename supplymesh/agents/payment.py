@@ -394,7 +394,7 @@ async def _complete(ctx: Context, payment: PaymentState) -> None:
         payment.conversation_id,
         _chat(
             f"Payment of {_display(payment.amount_minor, payment.currency)} collected. "
-            "This confirms collection into the merchant account, not supplier payouts."
+            "This confirms collection into the merchant account."
         ),
     )
 

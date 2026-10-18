@@ -114,8 +114,9 @@ def build_chat_protocol(coordinator: FetchConnectivityCoordinator | None = None)
         await ctx.send(
             sender,
             _chat_message(
-                "I can protect existing reservations, calculate shortages, source parts, and "
-                "prepare purchase orders. Confirm the demand to begin.",
+                "I'm SupplyMesh, your manufacturing procurement coordinator. I check inventory, "
+                "find missing parts, compare supplier offers, and manage purchase orders through "
+                "confirmation and payment. Enter your demand to begin.",
                 card.metadata(),
             ),
         )
