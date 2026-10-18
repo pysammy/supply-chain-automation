@@ -26,7 +26,14 @@ def main() -> None:
         raise RuntimeError("all six agent seeds are required to start the Agentverse host")
     values = [value.get_secret_value() for value in configured if value is not None]
     agents = build_company_agents(
-        AgentSeeds(*values),
+        AgentSeeds(
+            *values,
+            payment=(
+                settings.payment_agent_seed.get_secret_value()
+                if settings.payment_agent_seed
+                else ""
+            ),
+        ),
         publish_agent_details=settings.publish_agent_details,
         mailbox=settings.agent_mailbox,
         supplier_base_url=settings.supplier_simulator_base_url,
@@ -41,6 +48,10 @@ def main() -> None:
         fx_cache_ttl_seconds=settings.fx_cache_ttl_seconds,
         ack_poll_interval_seconds=settings.ack_poll_interval_seconds,
         ack_poll_timeout_seconds=settings.ack_poll_timeout_seconds,
+        stripe_secret_key=(
+            settings.stripe_secret_key.get_secret_value() if settings.stripe_secret_key else ""
+        ),
+        stripe_publishable_key=settings.stripe_publishable_key,
     )
     Bureau(agents=list(agents), port=settings.agent_host_port, network="testnet").run()
 

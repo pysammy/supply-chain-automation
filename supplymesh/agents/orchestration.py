@@ -12,6 +12,7 @@ from uagents_core.contrib.protocols.chat import ChatMessage, MetadataContent, Te
 from uagents_core.types import DeliveryStatus
 
 from supplymesh.agents.connectivity import FetchConnectivityCoordinator, MessageContext
+from supplymesh.agents.payment import request_po_payment
 from supplymesh.agents.transport import (
     AcknowledgmentComparisonTransport,
     AcknowledgmentReceivedTransport,
@@ -130,6 +131,7 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
     transition_graph: Any | None = None
     audit: AuditRepository | None = None
     reservation_store: ReservationStore | None = None
+    payment_address: str = ""
 
     @property
     def routing_store(self) -> OrchestrationStore:
@@ -920,10 +922,12 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
                     "latest_arrival": arrival.isoformat(),
                 }
             )
+        total_minor = int((total * 100).to_integral_value())
+        currency = selected.currency if selected else snapshot.state.get("currency", "USD")
         card = completion_detail(
             workflow_id=str(snapshot.workflow_id),
-            total_cost_minor=int((total * 100).to_integral_value()),
-            currency=selected.currency if selected else snapshot.state.get("currency", "USD"),
+            total_cost_minor=total_minor,
+            currency=currency,
             target_feasible=feasible,
             commitments=commitments,
             audit_references=list(snapshot.state.get("comparisons", {}).keys()),
@@ -942,6 +946,23 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
                 "Agent activity and durable workflow evidence are available for review.",
                 agent_activity_detail(activities).metadata(),
             )
+        if self.payment_address and total_minor > 0:
+            try:
+                await request_po_payment(
+                    cast(Context, ctx),
+                    self.payment_address,
+                    conversation_id=snapshot.conversation_id,
+                    workflow_id=snapshot.workflow_id,
+                    amount_minor=total_minor,
+                    currency=currency,
+                )
+            except Exception:
+                await self._send_chat(
+                    ctx,
+                    snapshot.conversation_id,
+                    "Supplier commitments are confirmed, but the payment checkout could not be "
+                    "started. The purchase-order total remains outstanding.",
+                )
 
     def _transition_reservations(
         self, workflow_id: UUID, status: Literal["COMMITTED", "RELEASED"]

@@ -125,7 +125,15 @@ def chat_selection(action: str, target_id: str, target_version: int) -> ChatMess
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_routes_all_specialists_and_completes_exact_ack() -> None:
+async def test_orchestrator_routes_all_specialists_and_completes_exact_ack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payments: list[dict[str, Any]] = []
+
+    async def record_payment(ctx: object, address: str, **values: Any) -> None:
+        payments.append({"address": address, **values})
+
+    monkeypatch.setattr("supplymesh.agents.orchestration.request_po_payment", record_payment)
     engine, store, sessions = repository()
     workflow_id = uuid4()
     correlation_id = uuid4()
@@ -150,6 +158,7 @@ async def test_orchestrator_routes_all_specialists_and_completes_exact_ack() -> 
         acknowledgment_address="agent1ack",
         transition_graph=build_event_transition_graph(),
         audit=ActivityAudit(),  # type: ignore[arg-type]
+        payment_address="agent1payment",
     )
     specialist_protocol = build_specialist_response_protocol(coordinator)
     planning_protocol = build_planning_response_protocol(coordinator)
@@ -365,6 +374,25 @@ async def test_orchestrator_routes_all_specialists_and_completes_exact_ack() -> 
         and json.loads(content.metadata["card_payload"]).get("title") == "Agent activity"
     ]
     assert activity_cards[0]["summary_rows"][0]["label"] == "inventory-and-bom"
+    completion_card = next(
+        json.loads(content.metadata["card_payload"])
+        for _, message in completion_context.sent
+        if isinstance(message, ChatMessage)
+        for content in message.content
+        if isinstance(content, MetadataContent)
+        and json.loads(content.metadata["card_payload"]).get("title") != "Agent activity"
+    )
+    assert payments == [
+        {
+            "address": "agent1payment",
+            "conversation_id": "agent1manager",
+            "workflow_id": workflow_id,
+            "amount_minor": payments[0]["amount_minor"],
+            "currency": "USD",
+        }
+    ]
+    assert payments[0]["amount_minor"] > 0
+    assert f"{payments[0]['amount_minor'] / 100:.2f}" in json.dumps(completion_card)
     assert all(
         item["status"] == "DELIVERED" for item in completed.state["outbound_messages"].values()
     )
