@@ -12,6 +12,7 @@ from uagents_core.contrib.protocols.chat import ChatMessage, MetadataContent, Te
 from uagents_core.types import DeliveryStatus
 
 from supplymesh.agents.connectivity import FetchConnectivityCoordinator, MessageContext
+from supplymesh.agents.payment import confirm_chat_payment, request_po_payment
 from supplymesh.agents.transport import (
     AcknowledgmentComparisonTransport,
     AcknowledgmentReceivedTransport,
@@ -46,6 +47,7 @@ from supplymesh.domain.procurement import (
 )
 from supplymesh.domain.sourcing import ProcurementPlan
 from supplymesh.persistence.audit_repository import AuditRepository
+from supplymesh.persistence.payment_repository import PaymentRepository
 from supplymesh.persistence.workflow_repository import PendingOutbound, WorkflowSnapshot
 from supplymesh.protocols.common import WorkflowStatusResponse
 from supplymesh.protocols.exceptions import AcknowledgmentComparisonResult
@@ -130,6 +132,8 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
     transition_graph: Any | None = None
     audit: AuditRepository | None = None
     reservation_store: ReservationStore | None = None
+    payment_address: str = ""
+    payments: PaymentRepository | None = None
 
     @property
     def routing_store(self) -> OrchestrationStore:
@@ -257,7 +261,20 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
     async def handle_selection(
         self, ctx: MessageContext, *, conversation_id: str, selection: CardSelection
     ) -> bool:
-        if selection.action in {"show_completion", "continue_to_sourcing"}:
+        if selection.action == "confirm_payment":
+            if not self.payment_address or self.payments is None:
+                raise ValueError("payments are not enabled")
+            if selection.target_id is None:
+                raise ValueError("a checkout session ID is required")
+            await confirm_chat_payment(
+                cast(Context, ctx),
+                self.payment_address,
+                conversation_id=conversation_id,
+                session_id=selection.target_id,
+                repository=self.payments,
+            )
+            return True
+        if selection.action in {"show_completion", "continue_to_sourcing", "request_payment"}:
             if selection.target_id is None:
                 raise ValueError("a workflow ID is required")
             completed = self._snapshot(UUID(selection.target_id))
@@ -266,6 +283,22 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
             if selection.action == "show_completion":
                 self._require_status(completed, "COMPLETED")
                 await self._send_completion(ctx, completed)
+            elif selection.action == "request_payment":
+                self._require_status(completed, "COMPLETED")
+                if not self.payment_address or self.payments is None:
+                    raise ValueError("payments are not enabled")
+                amount, currency, _, _ = self._completion_details(completed)
+                if amount <= 0:
+                    raise ValueError("there are no confirmed purchase orders to pay")
+                await request_po_payment(
+                    cast(Context, ctx),
+                    self.payment_address,
+                    conversation_id=conversation_id,
+                    workflow_id=completed.workflow_id,
+                    amount_minor=amount,
+                    currency=currency,
+                    repository=self.payments,
+                )
             else:
                 self._require_status(completed, "SOURCING")
                 if selection.target_version != completed.state.get("inventory_review_version"):
@@ -898,7 +931,10 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
             ),
         )
 
-    async def _send_completion(self, ctx: MessageContext, snapshot: WorkflowSnapshot) -> None:
+    @staticmethod
+    def _completion_details(
+        snapshot: WorkflowSnapshot,
+    ) -> tuple[int, str, bool, list[dict[str, Any]]]:
         plans = [ProcurementPlan.model_validate(value) for value in snapshot.state.get("plans", [])]
         selected = next(
             (plan for plan in plans if plan.plan_id == snapshot.state.get("selected_plan_id")),
@@ -948,20 +984,26 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
                 }
             )
         currency = selected.currency if selected else snapshot.state.get("currency", "USD")
+        return int((total * 100).to_integral_value()), currency, feasible, commitments
+
+    async def _send_completion(self, ctx: MessageContext, snapshot: WorkflowSnapshot) -> None:
+        total_minor, currency, feasible, commitments = self._completion_details(snapshot)
         card = completion_detail(
             workflow_id=str(snapshot.workflow_id),
-            total_cost_minor=int((total * 100).to_integral_value()),
+            total_cost_minor=total_minor,
             currency=currency,
             target_feasible=feasible,
             commitments=commitments,
             audit_references=list(snapshot.state.get("comparisons", {}).keys()),
             activities=self.audit.list_activity(snapshot.workflow_id) if self.audit else [],
+            payment_enabled=bool(self.payment_address),
+            payment_status=snapshot.state.get("payment", {}).get("status", "NOT_REQUESTED"),
         )
         await self._send_chat(
             ctx,
             snapshot.conversation_id,
             f"Procurement is complete and the supplier commitments are confirmed. "
-            f"Total: {currency} {total:.2f}. "
+            f"Total: {currency} {Decimal(total_minor) / 100:.2f}. "
             f"Manufacturing target feasible: {'Yes' if feasible else 'No'}.",
             card.metadata(),
         )

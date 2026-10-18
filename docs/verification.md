@@ -1,6 +1,6 @@
 # Verification and Definition of Done Status
 
-Last verified: 2026-10-17 (America/Los_Angeles)
+Last verified: 2026-10-18 (America/Los_Angeles)
 
 This matrix separates executed evidence from code presence and external/manual blockers. A check
 means the cited automated test or reproducible command passed; unchecked items are not claimed.
@@ -8,9 +8,10 @@ means the cited automated test or reproducible command passed; unchecked items a
 ## Executed locally
 
 - [x] Ruff formatting and linting: `uv run ruff format --check . && uv run ruff check .`
-- [x] Strict typing for 45 agent/domain/persistence/protocol/service source files:
-  `uv run --python 3.11 --isolated mypy`.
-- [x] Automated suite: 117 passed with `.venv/bin/python -m pytest -q`.
+- [x] Strict typing for 47 agent/domain/persistence/protocol/service source files:
+  `.venv/bin/mypy`.
+- [x] Automated suite: 157 passed with `.venv/bin/python -m pytest -q
+  --cov=supplymesh --cov=apps --cov-report=term:skip-covered`.
 - [x] Exception cards identify the supplier and PO, and map each discrepancy's PO line number to
   its component SKU. Pending exception cards can be redisplayed without changing workflow state.
 - [x] Inventory assessment rounds aggregated EA requirements up and available whole-part counts
@@ -21,7 +22,21 @@ means the cited automated test or reproducible command passed; unchecked items a
   presents View completion without immediately replacing the assessment.
 - [x] Supplier REST quotations cover every component in the demo motorcycle BOM; a regression
   sources 20 of each component and verifies all five plans cover every shortage.
-- [x] Full `supplymesh` plus `apps` source coverage: 89% (`pytest-cov`).
+- [x] Full `supplymesh` plus `apps` source coverage: 90% (`pytest-cov`).
+- [x] Optional payment collection: mocked Stripe checks cover explicit checkout approval,
+  restart recovery, duplicate confirmations, lost callbacks, amount/currency/workflow validation,
+  unauthorized requests, expired sessions, and database failure before receipt confirmation.
+- [x] Isolated PostgreSQL payment checks: migrations through `0007`, JSON session lookup,
+  conversation isolation, atomic receipt/audit rollback, durable receipts, and duplicate
+  confirmation. `alembic check` reports no schema changes; no payment migration is required.
+- [x] Corrected Stripe client created and retrieved an actual test-mode Checkout Session, both
+  HTTP 200, with API version `2026-09-30.endive`. The session is journaled for reuse; no payment
+  was submitted. Request schema constraints are recorded from Stripe's published OpenAPI source.
+- [x] Native embedded checkout payload accepted by ASI:One's actual production chat parser,
+  executed locally from its public bundle. Native chat callbacks traverse the Orchestrator
+  handler and require conversation ownership and successful Stripe verification before collection.
+- [ ] Live payment UI and callback confirmation. The latest compatibility fix requires rebuilding
+  the running agent host; see [payment setup and verification](payments.md).
 - [x] PostgreSQL migrations `0001`–`0007` upgrade, downgrade to base, and re-upgrade on a clean
   PostgreSQL 17 database.
 - [x] Alembic reports no SupplyMesh schema drift after LangGraph checkpoint setup.

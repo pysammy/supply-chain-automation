@@ -62,6 +62,9 @@ def parse_card_selection(raw: str) -> CardSelection | None:
         return None
     if not isinstance(value, dict):
         return None
+    # Native ASI:One Stripe checkout returns a chat callback rather than a CTA selection.
+    if set(value) == {"stripe_checkout_session_id"}:
+        value = {"action": "confirm_payment", "target_id": value["stripe_checkout_session_id"]}
     # This UI flag is not a workflow approval; explicit actions still require
     # the existing target/version and workflow-state checks in the coordinator.
     if "approved" in value:

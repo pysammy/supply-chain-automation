@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     procurement_agent_seed: SecretStr | None = None
     acknowledgment_agent_seed: SecretStr | None = None
     supplier_agent_seed: SecretStr | None = None
+    payment_agent_seed: SecretStr | None = None
+    stripe_secret_key: SecretStr | None = None
+    stripe_publishable_key: str = ""
+    stripe_return_url: str = "https://asi1.ai"
     agent_host_port: int = Field(default=8000, ge=1, le=65535)
     agent_mailbox: bool = True
     publish_agent_details: bool = False

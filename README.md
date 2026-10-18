@@ -5,6 +5,7 @@ manager describes a demand in ASI:One; five company-side agents protect existing
 calculate BOM shortages, collect supplier REST quotations, optimize sourcing, execute approved
 X12 purchase orders, and resolve supplier acknowledgment conflicts. A sixth Supplier Agent
 represents Alpha, Beta, and Gamma and calls their backend REST endpoints as tools.
+An optional seventh, internal Payment Agent collects confirmed order totals through Stripe.
 
 This repository is an implementation in progress. The local deterministic workflow is tested,
 but the project is **not submission-complete**: Agentverse profiles, a deployed ASI:One
@@ -50,12 +51,16 @@ ASI:One is the intended primary UI; there is no custom frontend.
 | Procurement Execution | Approval revalidation, X12 850/860, idempotent supplier calls, polling |
 | Acknowledgment and Exception | X12 855/865 parsing, materiality, impact, exception actions |
 | Supplier | Public quotation/capacity inquiries; internal supplier REST tools for Alpha/Beta/Gamma |
+| Payment (optional) | Internal Stripe checkout creation and verification; Orchestrator owns the payment conversation |
 
-Only the Orchestrator and Supplier Agent publish Agent Chat Protocol. The other four agents
+Only the Orchestrator and Supplier Agent publish Agent Chat Protocol. The four procurement specialists
 accept workflow requests only from the Orchestrator. Supplier tool calls accept Sourcing or
 Procurement for RFQs/capacity and only Procurement for PO/change execution and status.
+The optional Payment Agent also accepts requests only from the Orchestrator.
 
 Each of the six identities requires its own environment-only seed. The host rejects missing or duplicate seeds.
+Payments require a seventh unique seed and Stripe keys; leaving that seed blank keeps the existing
+six-agent flow. See [payment setup and behavior](docs/payments.md).
 
 ## Workflow
 

@@ -44,6 +44,7 @@ from supplymesh.persistence.orm_models import (
     ApprovalDecisionRecord,
     WorkflowRun,
 )
+from supplymesh.persistence.payment_repository import PaymentRepository
 from supplymesh.persistence.workflow_repository import ConnectivitySession, WorkflowRepository
 from supplymesh.protocols.common import WorkflowStatusResponse
 from supplymesh.protocols.exceptions import AcknowledgmentComparisonResult
@@ -187,7 +188,15 @@ async def test_sufficient_inventory_stays_visible_until_completion_is_requested(
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_routes_all_specialists_and_completes_exact_ack() -> None:
+async def test_orchestrator_routes_all_specialists_and_completes_exact_ack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payment_calls: list[dict[str, Any]] = []
+
+    async def payment_request(ctx: object, address: str, **values: Any) -> None:
+        payment_calls.append({"address": address, **values})
+
+    monkeypatch.setattr("supplymesh.agents.orchestration.request_po_payment", payment_request)
     engine, store, sessions = repository()
     workflow_id = uuid4()
     correlation_id = uuid4()
@@ -212,6 +221,8 @@ async def test_orchestrator_routes_all_specialists_and_completes_exact_ack() -> 
         acknowledgment_address="agent1ack",
         transition_graph=build_event_transition_graph(),
         audit=ActivityAudit(),  # type: ignore[arg-type]
+        payment_address="agent1payment",
+        payments=PaymentRepository(sessions),
     )
     specialist_protocol = build_specialist_response_protocol(coordinator)
     planning_protocol = build_planning_response_protocol(coordinator)
@@ -497,6 +508,26 @@ async def test_orchestrator_routes_all_specialists_and_completes_exact_ack() -> 
     ]
     assert replayed_titles == ["Procurement complete"]
     assert store.snapshot(workflow_id) == completed
+    assert payment_calls == []  # Finishing or viewing the summary never creates checkout.
+    pay_selection = activity_cards[0]["ctas"][0]["selection"]
+    assert pay_selection == {"action": "request_payment", "target_id": str(workflow_id)}
+    with pytest.raises(ValueError, match="conversation"):
+        await coordinator.handle_selection(
+            Context(),
+            conversation_id="agent1other",
+            selection=CardSelection.model_validate(pay_selection),
+        )
+    await coordinator.handle_selection(
+        Context(),
+        conversation_id="agent1manager",
+        selection=CardSelection.model_validate(pay_selection),
+    )
+    assert len(payment_calls) == 1
+    assert payment_calls[0]["address"] == "agent1payment"
+    assert payment_calls[0]["amount_minor"] == sum(
+        int(Decimal(po["total"]) * 100) for po in completed.state["purchase_orders"]
+    )
+    assert payment_calls[0]["currency"] == "USD"
     assert all(
         isinstance(message, (ChatMessage, ChatAcknowledgement))
         for _, message in replay_context.sent
@@ -507,6 +538,7 @@ async def test_orchestrator_routes_all_specialists_and_completes_exact_ack() -> 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["show_completion", "request_payment"])
 @pytest.mark.parametrize(
     ("status", "conversation", "include_target"),
     [
@@ -516,7 +548,7 @@ async def test_orchestrator_routes_all_specialists_and_completes_exact_ack() -> 
     ],
 )
 async def test_completion_replay_rejects_other_conversations_and_unfinished_workflows(
-    status: str, conversation: str, include_target: bool
+    status: str, conversation: str, include_target: bool, action: str
 ) -> None:
     engine, store, sessions = repository()
     workflow_id = uuid4()
@@ -536,7 +568,7 @@ async def test_completion_replay_rejects_other_conversations_and_unfinished_work
             context,
             conversation_id=conversation,
             selection=CardSelection(
-                action="show_completion", target_id=str(workflow_id) if include_target else None
+                action=action, target_id=str(workflow_id) if include_target else None
             ),
         )
     assert context.sent == []

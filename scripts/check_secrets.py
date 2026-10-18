@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SENSITIVE_ASSIGNMENT = re.compile(
-    r"(?m)^(?:ASI_ONE_API_KEY|AGENTVERSE_API_KEY|[A-Z_]*AGENT_SEED)[ \t]*="
+    r"(?m)^(?:ASI_ONE_API_KEY|AGENTVERSE_API_KEY|STRIPE_SECRET_KEY|[A-Z_]*AGENT_SEED)[ \t]*="
     r"[ \t]*([^\s#]+)"
 )
 PRIVATE_KEY = re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----")

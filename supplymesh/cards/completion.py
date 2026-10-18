@@ -40,14 +40,38 @@ def completion_detail(
     commitments: list[dict[str, Any]],
     audit_references: list[str],
     activities: list[dict[str, Any]] | None = None,
+    payment_enabled: bool = False,
+    payment_status: str = "NOT_REQUESTED",
 ) -> CardEnvelope:
     return render_card(
         "detail",
         {
             "title": "Procurement complete",
+            "ctas": (
+                [
+                    {
+                        "label": "Pay confirmed total",
+                        "selection": {"action": "request_payment", "target_id": workflow_id},
+                        "primary": True,
+                    },
+                    {"label": "Done", "selection": {"action": "dismiss_card"}},
+                ]
+                if payment_enabled and payment_status != "PAID" and total_cost_minor > 0
+                else []
+            ),
             "summary_rows": [
                 {"label": "Workflow", "value": workflow_id},
                 {"label": "Total", "value": f"{currency} {Decimal(total_cost_minor) / 100:.2f}"},
+                *(
+                    [
+                        {
+                            "label": "Payment collected",
+                            "value": "Yes" if payment_status == "PAID" else "No",
+                        }
+                    ]
+                    if payment_enabled and total_cost_minor > 0
+                    else []
+                ),
                 {
                     "label": "Manufacturing target feasible",
                     "value": "Yes" if target_feasible else "No",
@@ -69,7 +93,7 @@ def completion_detail(
                 ],
             ],
         },
-        informational=True,
+        informational=not (payment_enabled and payment_status != "PAID" and total_cost_minor > 0),
     )
 
 

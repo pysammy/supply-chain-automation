@@ -14,6 +14,11 @@ from supplymesh.agents.orchestration import (
     build_specialist_response_protocol,
 )
 from supplymesh.agents.orchestrator import build_chat_protocol, build_planning_response_protocol
+from supplymesh.agents.payment import (
+    StripeCheckout,
+    build_payment_seller_protocol,
+    build_payment_tool_protocol,
+)
 from supplymesh.agents.procurement import ProcurementAgentService, build_procurement_protocol
 from supplymesh.agents.sourcing import LiveFxResolver, SourcingAgentService, build_sourcing_protocol
 from supplymesh.agents.supplier import (
@@ -26,6 +31,7 @@ from supplymesh.clients.supplier_client import SupplierClient
 from supplymesh.persistence.audit_repository import AuditRepository
 from supplymesh.persistence.database import get_engine
 from supplymesh.persistence.fx_repository import SqlAlchemyFxRepository
+from supplymesh.persistence.payment_repository import PaymentRepository
 from supplymesh.persistence.planning_repository import PlanningRequestRepository
 from supplymesh.persistence.procurement_repository import ProcurementRepository
 from supplymesh.persistence.side_effect_journal import SqlAlchemySideEffectJournal
@@ -42,12 +48,14 @@ class AgentSeeds:
     procurement: str
     acknowledgment: str
     supplier: str
+    payment: str = ""  # optional seventh agent; empty disables Stripe payments
 
     def validate(self) -> None:
-        values = tuple(vars(self).values())
-        if any(not value.strip() for value in values):
+        required = tuple(value for key, value in vars(self).items() if key != "payment")
+        if any(not value.strip() for value in required):
             raise ValueError("all six agent seeds must be configured")
-        if len(set(values)) != 6:
+        values = (*required, self.payment) if self.payment.strip() else required
+        if len(set(values)) != len(values):
             raise ValueError("each agent must have a unique seed")
 
 
@@ -84,9 +92,15 @@ def build_company_agents(
     fx_cache_ttl_seconds: int = 3600,
     ack_poll_interval_seconds: float = 2,
     ack_poll_timeout_seconds: float = 45,
+    stripe_secret_key: str = "",
+    stripe_publishable_key: str = "",
+    stripe_return_url: str = "https://asi1.ai",
 ) -> tuple[Agent, ...]:
-    """Build five company agents and one public Supplier Agent in the same Bureau."""
+    """Build five company agents, one public Supplier Agent and an optional internal Payment
+    Agent in the same Bureau."""
     seeds.validate()
+    if seeds.payment.strip() and not (stripe_secret_key and stripe_publishable_key):
+        raise ValueError("PAYMENT_AGENT_SEED requires STRIPE_SECRET_KEY and STRIPE_PUBLISHABLE_KEY")
     descriptions = {
         "orchestrator": (
             "orchestrator",
@@ -228,6 +242,35 @@ def build_company_agents(
     )
     audit_repository = AuditRepository(_session_factory)
     planning_repository = PlanningRequestRepository(_session_factory)
+    payments = PaymentRepository(_session_factory)
+    payment = None
+    if seeds.payment.strip():
+        payment = _specialist(
+            "supplymesh-payment",
+            seeds.payment,
+            (
+                "Internal specialist: Stripe Checkout for confirmed purchase-order totals. "
+                "Called only by the manufacturing Orchestrator."
+            ),
+            publish_agent_details,
+            mailbox=mailbox,
+        )
+        payment.include(
+            build_payment_tool_protocol(
+                StripeCheckout(
+                    stripe_secret_key,
+                    stripe_publishable_key,
+                    return_url=stripe_return_url,
+                    journal=journal,
+                ),
+                orchestrator_address=orchestrator.address,
+            ),
+            publish_manifest=publish_manifests,
+        )
+        orchestrator.include(
+            build_payment_seller_protocol(payment.address, payments),
+            publish_manifest=publish_manifests,
+        )
     coordinator = OrchestrationCoordinator(
         inventory_address=inventory.address,
         requests=planning_repository,
@@ -238,6 +281,8 @@ def build_company_agents(
         transition_graph=build_event_transition_graph(),
         audit=audit_repository,
         reservation_store=planning_repository,
+        payment_address=payment.address if payment is not None else "",
+        payments=payments if payment is not None else None,
     )
     orchestrator.include(build_chat_protocol(coordinator), publish_manifest=publish_manifests)
     orchestrator.include(
@@ -246,4 +291,5 @@ def build_company_agents(
     orchestrator.include(
         build_specialist_response_protocol(coordinator), publish_manifest=publish_manifests
     )
-    return orchestrator, inventory, sourcing, procurement, acknowledgment, supplier
+    agents_built = (orchestrator, inventory, sourcing, procurement, acknowledgment, supplier)
+    return agents_built if payment is None else (*agents_built, payment)

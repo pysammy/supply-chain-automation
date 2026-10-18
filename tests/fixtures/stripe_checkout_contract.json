@@ -1,0 +1,56 @@
+{
+  "source": "https://github.com/stripe/openapi/blob/4d2b98a2a17fcd15fa5d95bdfc766fdacf928fe2/openapi/spec3.json",
+  "api_version": "2026-09-30.endive",
+  "retrieved": "2026-10-18",
+  "note": "Selected request field constraints extracted from the Stripe OpenAPI Checkout Session create schema. The metadata workflow key is application-defined.",
+  "fields": {
+    "ui_mode": {
+      "enum": [
+        "elements",
+        "embedded_page",
+        "form",
+        "hosted_page"
+      ],
+      "type": "string"
+    },
+    "redirect_on_completion": {
+      "enum": [
+        "always",
+        "if_required",
+        "never"
+      ],
+      "type": "string"
+    },
+    "return_url": {
+      "type": "string"
+    },
+    "mode": {
+      "enum": [
+        "payment",
+        "setup",
+        "subscription"
+      ],
+      "type": "string"
+    },
+    "line_items[0][quantity]": {
+      "type": "integer"
+    },
+    "line_items[0][price_data][currency]": {
+      "type": "string"
+    },
+    "line_items[0][price_data][unit_amount]": {
+      "type": "integer"
+    },
+    "line_items[0][price_data][product_data][name]": {
+      "maxLength": 5000,
+      "type": "string"
+    },
+    "line_items[0][price_data][product_data][description]": {
+      "maxLength": 40000,
+      "type": "string"
+    },
+    "metadata[workflow_id]": {
+      "type": "string"
+    }
+  }
+}
