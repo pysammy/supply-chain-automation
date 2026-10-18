@@ -308,7 +308,16 @@ async def test_saved_legacy_checkout_is_reused_without_creating_a_replacement(se
         "unknown_session",
     ],
 )
-async def test_native_asi_chat_callback_uses_stripe_truth_and_conversation_ownership(setup, case):
+@pytest.mark.parametrize(
+    "mention",
+    [
+        "agent1qtfzla78vr2uznva9twcsz5xseyzs4z9paxk3zu8p49mdh5h72g92u5r6wk",
+        "sm-orchestrator",
+    ],
+)
+async def test_native_asi_chat_callback_uses_stripe_truth_and_conversation_ownership(
+    setup, case, mention
+):
     await request(setup)
     stripe_session = setup.server.sessions["cs_test_1"]
     stripe_session["payment_status"] = "unpaid" if case == "unpaid" else "paid"
@@ -334,8 +343,7 @@ async def test_native_asi_chat_callback_uses_stripe_truth_and_conversation_owner
         timestamp=datetime.now(UTC),
         content=[
             TextContent(
-                text="@agent1qtfzla78vr2uznva9twcsz5xseyzs4z9paxk3zu8p49mdh5h72g92u5r6wk "
-                + json.dumps({"stripe_checkout_session_id": session_id})
+                text=f"@{mention} " + json.dumps({"stripe_checkout_session_id": session_id})
             )
         ],
     )

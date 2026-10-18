@@ -94,9 +94,13 @@ def test_ambiguous_or_unknown_flat_form_inputs_are_rejected(reply: dict) -> None
     assert parse_card_selection(json.dumps(reply)) is None
 
 
-def test_captured_asi_form_submission_is_accepted() -> None:
+@pytest.mark.parametrize(
+    "mention",
+    ["agent1qtfzla78vr2uznva9twcsz5xseyzs4z9paxk3zu8p49mdh5h72g92u5r6wk", "sm-orchestrator"],
+)
+def test_captured_asi_form_submission_is_accepted(mention: str) -> None:
     raw = (
-        "@agent1qtfzla78vr2uznva9twcsz5xseyzs4z9paxk3zu8p49mdh5h72g92u5r6wk "
+        f"@{mention} "
         '{"product_sku":"MOTO-URBANX-2026","quantity":50,"required_by":"2026-12-15",'
         '"priority":"high","cost_ceiling_minor":100000000,"action":"submit_demand",'
         '"approved":true}'
@@ -107,6 +111,28 @@ def test_captured_asi_form_submission_is_accepted() -> None:
     intake = DemandIntake.model_validate(selection.values)
     assert intake.quantity == 50
     assert intake.cost_ceiling_minor == 100_000_000
+
+
+@pytest.mark.parametrize(
+    "handle",
+    [
+        "sm-supplier",
+        "sm-inventory",
+        "sm-sourcing",
+        "sm-procurement",
+        "sm-acknowledgement",
+        "sm-orchestrator",
+        "sm-payment",
+    ],
+)
+def test_custom_handle_preserves_approval_selection(handle: str) -> None:
+    selection = parse_card_selection(
+        f'@{handle} {{"action":"approve_plan","target_id":"plan-1","target_version":3}}'
+    )
+    assert selection is not None
+    assert selection.action == "approve_plan"
+    assert selection.target_id == "plan-1"
+    assert selection.target_version == 3
 
 
 def test_platform_confirmation_preserves_explicit_approval_target() -> None:
@@ -122,7 +148,12 @@ def test_platform_confirmation_preserves_explicit_approval_target() -> None:
 @pytest.mark.parametrize(
     "raw",
     [
-        '@someone {"action":"submit_demand","quantity":50}',
+        '@invalid_handle {"action":"submit_demand","quantity":50}',
+        '@handle-that-is-too-long {"action":"submit_demand","quantity":50}',
+        '@ {"action":"submit_demand","quantity":50}',
+        '@sm-orchestrator @sm-supplier {"action":"submit_demand","quantity":50}',
+        '@sm-orchestrator {"action":"approve_plan","approved":false}',
+        '@sm-orchestrator {"action":"submit_demand","unexpected":1}',
         'Please submit {"action":"submit_demand","quantity":50}',
         '{"action":"submit_demand","approved":"true"}',
         '{"action":"approve_plan","approved":false}',

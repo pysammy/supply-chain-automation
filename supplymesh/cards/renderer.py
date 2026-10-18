@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -53,8 +54,14 @@ def parse_card_selection(raw: str) -> CardSelection | None:
     # Direct ASI:One replies can retain one leading recipient mention.
     if raw.startswith("@"):
         parts = raw.split(maxsplit=1)
-        if len(parts) != 2 or not is_valid_address(parts[0][1:]):
+        if len(parts) != 2:
             return None
+        mention = parts[0][1:]
+        if not (
+            is_valid_address(mention) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,19}", mention)
+        ):
+            return None
+        # The prefix is presentation only; sender/workflow authorization happens separately.
         raw = parts[1]
     try:
         value = json.loads(raw)
