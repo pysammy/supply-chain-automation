@@ -366,14 +366,12 @@ async def test_orchestrator_routes_all_specialists_and_completes_exact_ack(
         "agent1manager",
         chat_selection("review_plan", "cheapest-test", 1),
     )
-    approve_context = Context()
-    await handler(chat_protocol, ChatMessage)(
-        approve_context,
-        "agent1manager",
-        chat_selection("approve_plan", "cheapest-test", 1),
-    )
     snapshot = store.snapshot(workflow_id)
     assert snapshot is not None
+    assert snapshot.status == "WAITING_FOR_PO_APPROVAL"
+    assert not any(
+        isinstance(message, PurchaseOrderExecutionTransport) for _, message in review_context.sent
+    )
     batch_id = snapshot.state["purchase_order_batch_id"]
 
     po_approval_context = Context()

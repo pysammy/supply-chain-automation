@@ -44,7 +44,11 @@ show at most twenty lines per record; complete lines are retained in the databas
 History summaries are deliberately readable through the Supplier Agent's public chat, as a shared
 demo dataset. Manufacturer labels are not tenant authorization. API keys and raw X12/transaction
 responses are not included in history cards or the history endpoint. Public chat still cannot
-place orders or changes. Existing authenticated status endpoints return the original acknowledgments.
+place orders, changes, or cancellations. Authenticated status endpoints return the original
+acknowledgments unless the order has been cancelled, in which case they report `CANCELLED`.
+Confirmed cancellations retain original submissions and acknowledgments and persist a cancellation
+receipt. Accepted changes to the cancelled PO are also marked cancelled. See
+[replacement sourcing](replacement-sourcing.md) for the approved cancellation flow and endpoint.
 
 The authenticated read-only HTTP endpoint is:
 
@@ -58,7 +62,7 @@ Both filters are optional. Responses contain `items` and `next_offset` (null on 
 ## Deploy the change
 
 Preserve existing seeds, database volumes and orders. Build the two services, apply migration
-`0008` using the new image, then recreate only the supplier simulator and agent host:
+`0009` using the new image, then recreate only the supplier simulator and agent host:
 
 ```bash
 docker compose build agent-host supplier-simulator

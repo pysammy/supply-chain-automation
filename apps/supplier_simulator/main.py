@@ -8,7 +8,11 @@ from sqlalchemy.pool import StaticPool
 from apps.agent_host.settings import get_settings
 from apps.supplier_simulator.config import load_supplier_profiles
 from apps.supplier_simulator.service import RfqService
-from supplymesh.domain.procurement import ChangeOrderSubmission, PurchaseOrderSubmission
+from supplymesh.domain.procurement import (
+    ChangeOrderSubmission,
+    PurchaseOrderCancellation,
+    PurchaseOrderSubmission,
+)
 from supplymesh.domain.sourcing import RfqRequest
 from supplymesh.persistence.orm_models import SupplierOrderHistoryRecord
 from supplymesh.persistence.supplier_history_repository import SupplierHistoryRepository
@@ -134,6 +138,19 @@ def create_app(
             return service.po_status(supplier_id, transaction_id).model_dump(mode="json")
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="transaction not found") from exc
+
+    @application.post("/api/v1/suppliers/{supplier_id}/purchase-orders/{transaction_id}/cancel")
+    def cancel_purchase_order(
+        supplier_id: str,
+        transaction_id: str,
+        request: PurchaseOrderCancellation,
+        x_api_key: str | None = Header(default=None),
+    ) -> dict[str, object]:
+        authenticate(x_api_key)
+        try:
+            return history.cancel(supplier_id, transaction_id, request).model_dump(mode="json")
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @application.post("/api/v1/suppliers/{supplier_id}/change-orders", status_code=202)
     def submit_change_order(

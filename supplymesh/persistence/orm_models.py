@@ -384,4 +384,5 @@ class SupplierOrderHistoryRecord(Base):
     accepted_response: Mapped[dict[str, Any]] = mapped_column(JSON)
     status_response: Mapped[dict[str, Any]] = mapped_column(JSON)
     outcome: Mapped[str] = mapped_column(String(32))
+    cancellation_response: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

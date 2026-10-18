@@ -6,7 +6,7 @@ from uuid import uuid4
 from uagents import Model
 
 SupplierOperation = Literal[
-    "capacity", "rfq", "submit_po", "po_status", "submit_change", "change_status"
+    "capacity", "rfq", "submit_po", "po_status", "submit_change", "change_status", "cancel_po"
 ]
 
 

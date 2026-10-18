@@ -1,7 +1,7 @@
 """Supplier-owned transaction history, independent of the manufacturer's workflow records."""
 
 from collections.abc import Callable
-from datetime import UTC
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -9,7 +9,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from supplymesh.domain.procurement import ChangeOrderSubmission, PurchaseOrderSubmission
+from supplymesh.domain.procurement import (
+    ChangeOrderSubmission,
+    PurchaseOrderCancellation,
+    PurchaseOrderSubmission,
+    SupplierCancellationConfirmed,
+)
 from supplymesh.persistence.orm_models import SupplierOrderHistoryRecord
 from supplymesh.services.approval_service import approval_payload_hash
 
@@ -78,6 +83,20 @@ class SupplierHistoryRepository:
         )
         try:
             with self.sessions() as session, session.begin():
+                if submission.document_type == "860":
+                    original = session.scalar(
+                        select(SupplierOrderHistoryRecord)
+                        .where(
+                            SupplierOrderHistoryRecord.manufacturer_id
+                            == submission.manufacturer_id,
+                            SupplierOrderHistoryRecord.supplier_id == supplier_id,
+                            SupplierOrderHistoryRecord.po_number == submission.po_number,
+                            SupplierOrderHistoryRecord.document_type == "850",
+                        )
+                        .with_for_update()
+                    )
+                    if original is not None and original.cancellation_response:
+                        raise ValueError("a cancelled supplier order cannot be changed")
                 session.add(row)
         except IntegrityError:
             existing = self.find(supplier_id, submission, idempotency_key)
@@ -91,7 +110,49 @@ class SupplierHistoryRepository:
             row = session.get(SupplierOrderHistoryRecord, transaction_id)
             if row is None or row.supplier_id != supplier_id or row.document_type != document_type:
                 raise KeyError(transaction_id)
+            if row.cancellation_response:
+                return {"status": "CANCELLED"}
             return dict(row.status_response)
+
+    def cancel(
+        self, supplier_id: str, transaction_id: str, request: PurchaseOrderCancellation
+    ) -> SupplierCancellationConfirmed:
+        with self.sessions() as session, session.begin():
+            original = session.scalar(
+                select(SupplierOrderHistoryRecord)
+                .where(
+                    SupplierOrderHistoryRecord.transaction_id == transaction_id,
+                    SupplierOrderHistoryRecord.supplier_id == supplier_id,
+                    SupplierOrderHistoryRecord.manufacturer_id == request.manufacturer_id,
+                    SupplierOrderHistoryRecord.po_number == request.po_number,
+                    SupplierOrderHistoryRecord.po_version == request.po_version,
+                    SupplierOrderHistoryRecord.document_type == "850",
+                )
+                .with_for_update()
+            )
+            if original is None:
+                raise ValueError("cancellation does not match an existing manufacturer PO")
+            if original.cancellation_response:
+                return SupplierCancellationConfirmed.model_validate(original.cancellation_response)
+            result = SupplierCancellationConfirmed(
+                supplier_transaction_id=transaction_id,
+                po_number=request.po_number,
+                po_version=request.po_version,
+                cancelled_at=datetime.now(UTC),
+            )
+            # Cancellation is for the whole supplier PO, including accepted change versions.
+            rows = session.scalars(
+                select(SupplierOrderHistoryRecord).where(
+                    SupplierOrderHistoryRecord.manufacturer_id == request.manufacturer_id,
+                    SupplierOrderHistoryRecord.supplier_id == supplier_id,
+                    SupplierOrderHistoryRecord.po_number == request.po_number,
+                )
+            )
+            for row in rows:
+                row.cancellation_response = result.model_dump(mode="json")
+                if row.outcome != "CHANGE_REJECTED":
+                    row.outcome = "CANCELLED"
+            return result
 
     def history(
         self, *, manufacturer_id: str | None = None, supplier_id: str | None = None, offset: int = 0

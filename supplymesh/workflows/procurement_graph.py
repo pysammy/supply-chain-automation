@@ -6,6 +6,11 @@ from langgraph.types import interrupt
 from supplymesh.workflows.state import ProcurementWorkflowState
 
 _EVENT_TRANSITIONS: dict[str, tuple[frozenset[str], str]] = {
+    "cancellation_approved": (frozenset({"WAITING_FOR_EXCEPTION_DECISION"}), "CANCELLING_PO"),
+    "supplier_cancelled": (frozenset({"CANCELLING_PO"}), "SOURCING"),
+    "replacement_unavailable": (frozenset({"SOURCING"}), "WAITING_FOR_REPLACEMENT"),
+    "replacement_retry": (frozenset({"WAITING_FOR_REPLACEMENT"}), "SOURCING"),
+    "replacement_stopped": (frozenset({"WAITING_FOR_REPLACEMENT"}), "CANCELLED"),
     "inventory_shortage": (frozenset({"INVENTORY_PLANNING"}), "SOURCING"),
     "inventory_sufficient": (frozenset({"INVENTORY_PLANNING"}), "COMPLETED"),
     "plans_ready": (frozenset({"SOURCING"}), "WAITING_FOR_PLAN_APPROVAL"),

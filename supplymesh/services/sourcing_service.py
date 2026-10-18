@@ -31,7 +31,7 @@ async def collect_quotes(
 
     async def call(supplier_id: str) -> SupplierQuote:
         rfq = RfqRequest(
-            rfq_id=uuid5(request.workflow_id, supplier_id),
+            rfq_id=uuid5(request.message_id, supplier_id),
             currency=request.currency,
             valid_until=observed + timedelta(hours=1),
             lines=tuple(

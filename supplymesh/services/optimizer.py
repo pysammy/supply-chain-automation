@@ -18,6 +18,7 @@ def optimize_plans(
     quote_lines: tuple[NormalizedQuoteLine, ...],
     *,
     currency: str = "USD",
+    cost_ceiling_minor: int | None = None,
 ) -> OptimizationResult:
     if not shortages:
         return OptimizationResult(plans=(), infeasibility_reasons=("No shortages to source.",))
@@ -39,7 +40,7 @@ def optimize_plans(
 
     plans: list[ProcurementPlan] = []
     for name in ("cheapest", "fastest", "balanced", "risk_aware", "split"):
-        plan = _solve(name, shortages, quote_lines, currency)
+        plan = _solve(name, shortages, quote_lines, currency, cost_ceiling_minor)
         if plan is not None:
             plans.append(plan)
     if not plans:
@@ -47,7 +48,7 @@ def optimize_plans(
             plans=(),
             infeasibility_reasons=(
                 "Offers have enough nominal capacity but violate minimum-order or "
-                "packaging constraints.",
+                "packaging or budget constraints.",
             ),
         )
     return OptimizationResult(plans=tuple(plans))
@@ -58,6 +59,7 @@ def _solve(
     shortages: dict[str, int],
     lines: tuple[NormalizedQuoteLine, ...],
     currency: str,
+    cost_ceiling_minor: int | None = None,
 ) -> ProcurementPlan | None:
     model = cp_model.CpModel()
     quantities: dict[int, cp_model.IntVar] = {}
@@ -88,6 +90,8 @@ def _solve(
             model.add(sum(used[index] for index in indices) == 1)
 
     total_cost = sum(quantities[i] * lines[i].unit_price_minor for i in quantities)
+    if cost_ceiling_minor is not None:
+        model.add(total_cost <= cost_ceiling_minor)
     supplier_flags: dict[str, cp_model.IntVar] = {}
     for supplier in sorted({lines[i].supplier_id for i in quantities}):
         flag = model.new_bool_var(f"supplier_{supplier}")

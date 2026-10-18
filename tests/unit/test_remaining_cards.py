@@ -52,17 +52,20 @@ def test_exception_card_identifies_supplier_and_matches_components_by_po_line_nu
         recommended_action="switch",
         allowed_actions=("accept", "counter", "switch", "cancel"),
     )
-    nodes = json.loads(exception_review(comparison, po=po).card_payload)["root"]["children"]
+    card = exception_review(comparison, po=po)
+    assert card.card_kind == "custom"
+    payload = json.loads(card.card_payload)
+    nodes = payload["root"]["children"]
     texts = [node["value"] for node in nodes if node["type"] == "text"]
     assert "supplier-gamma" in texts[0] and "PO-DELAY-1" in texts[0]
     assert "Cost change: EUR 0.00" in texts[2]
     assert "ECU-001 (PO line 3)" in texts[3] and "2026-11-24" in texts[3]
     assert "ENGINE-001 (PO line 1)" in texts[4] and "2026-11-10" in texts[4]
     assert "FRAME-001 (PO line 2)" in texts[5] and "2026-11-17" in texts[5]
-    for node in nodes:
-        if node["type"] == "button":
-            assert node["action"]["selection"]["target_id"] == str(po.po_id)
-            assert node["action"]["selection"]["target_version"] == 2
+    for cta in (node for node in nodes if node["type"] == "button"):
+        assert cta["action"]["selection"]["target_id"] == str(po.po_id)
+        assert cta["action"]["selection"]["target_version"] == 2
+        assert cta["primary"] is False
 
 
 def test_activity_card_compacts_repeated_events_and_long_approver_addresses() -> None:

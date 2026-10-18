@@ -33,7 +33,9 @@ from supplymesh.domain.procurement import (
     ChangeOrderSubmission,
     ChangeTransactionStatus,
     ManufacturerSubmission,
+    PurchaseOrderCancellation,
     PurchaseOrderSubmission,
+    SupplierCancellationConfirmed,
     SupplierTransactionAccepted,
     SupplierTransactionStatus,
 )
@@ -46,6 +48,10 @@ class CapacityLookup(DomainModel):
 
 class TransactionLookup(DomainModel):
     transaction_id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+class CancellationLookup(PurchaseOrderCancellation, TransactionLookup):
+    pass
 
 
 class SupplierInquiry(CapacityLookup):
@@ -79,10 +85,22 @@ class SupplierAgentService:
             raise ValueError("supplier request is too large")
         supplier_id = request.supplier_id
         correlation_id = request.correlation_id
-        if request.operation in {"rfq", "submit_po", "submit_change"} and (
+        if request.operation in {"rfq", "submit_po", "submit_change", "cancel_po"} and (
             not request.idempotency_key or len(request.idempotency_key) < 16
         ):
             raise ValueError("supplier command requires an idempotency key")
+        if request.operation == "cancel_po":
+            cancellation = CancellationLookup.model_validate_json(request.payload_json)
+            receipt = await self.client.cancel_purchase_order(
+                supplier_id,
+                cancellation.transaction_id,
+                PurchaseOrderCancellation.model_validate(
+                    cancellation.model_dump(exclude={"transaction_id"})
+                ),
+                correlation_id=correlation_id,
+                idempotency_key=request.idempotency_key or "",
+            )
+            return receipt.model_dump(mode="json")
         if request.operation == "capacity":
             lookup = CapacityLookup.model_validate_json(request.payload_json)
             return await self.client.get_capacity(
@@ -280,6 +298,28 @@ class SupplierAgentClient:
                 correlation_id,
                 submission.model_dump_json(),
                 idempotency_key,
+            )
+        )
+
+    async def cancel_purchase_order(
+        self,
+        supplier_id: str,
+        transaction_id: str,
+        po_number: str,
+        po_version: int,
+        *,
+        correlation_id: str,
+        idempotency_key: str,
+    ) -> SupplierCancellationConfirmed:
+        payload = CancellationLookup(
+            transaction_id=transaction_id,
+            po_number=po_number,
+            po_version=po_version,
+            **self.manufacturer.model_dump(),
+        )
+        return SupplierCancellationConfirmed.model_validate_json(
+            await self._call(
+                "cancel_po", supplier_id, correlation_id, payload.model_dump_json(), idempotency_key
             )
         )
 

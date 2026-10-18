@@ -5,12 +5,16 @@ from hashlib import sha256
 from typing import Any, Literal, Protocol, cast
 from uuid import UUID, uuid5
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from uagents import Context
 from uagents import Protocol as AgentProtocol
 from uagents_core.contrib.protocols.chat import ChatMessage, MetadataContent, TextContent
 from uagents_core.types import DeliveryStatus
 
+from supplymesh.agents.cancellation_transport import (
+    CancellationRequestTransport,
+    PurchaseOrderCancelledTransport,
+)
 from supplymesh.agents.connectivity import FetchConnectivityCoordinator, MessageContext
 from supplymesh.agents.payment import confirm_chat_payment, request_po_payment
 from supplymesh.agents.transport import (
@@ -31,13 +35,18 @@ from supplymesh.agents.transport import (
 from supplymesh.cards.completion import completion_detail
 from supplymesh.cards.exception import exception_review
 from supplymesh.cards.inventory import inventory_assessment_detail
-from supplymesh.cards.plans import plan_approval_review, procurement_plan_carousel
+from supplymesh.cards.plans import procurement_plan_carousel
 from supplymesh.cards.procurement import (
     counterproposal_approval_review,
     counterproposal_form,
     purchase_order_batch_review,
 )
 from supplymesh.cards.renderer import CardSelection
+from supplymesh.cards.replacement import (
+    cancellation_review,
+    replacement_constraints,
+    replacement_options,
+)
 from supplymesh.domain.models import InventoryAssessment, TentativeReservation
 from supplymesh.domain.procurement import (
     ApprovalRecord,
@@ -57,6 +66,8 @@ from supplymesh.protocols.procurement import (
     ChangeOrderSubmitted,
     ChangeResponseReceived,
     CounterproposalExecutionRequest,
+    PurchaseOrderCancellationRequest,
+    PurchaseOrderCancelled,
     PurchaseOrderExecutionRequest,
     PurchaseOrderSubmitted,
 )
@@ -101,7 +112,11 @@ class OrchestrationStore(Protocol):
         *,
         workflow_id: UUID,
         decision_type: Literal[
-            "SELECT_PLAN", "SEND_PURCHASE_ORDER", "ACCEPT_EXCEPTION", "SEND_COUNTERPROPOSAL"
+            "SELECT_PLAN",
+            "SEND_PURCHASE_ORDER",
+            "ACCEPT_EXCEPTION",
+            "SEND_COUNTERPROPOSAL",
+            "CANCEL_PURCHASE_ORDER",
         ],
         target_type: str,
         target_id: str,
@@ -122,6 +137,11 @@ class ReservationStore(Protocol):
     def transition_reservations(
         self, workflow_id: UUID, *, status: Literal["COMMITTED", "RELEASED"]
     ) -> int: ...
+
+
+class ReplacementConstraints(BaseModel):
+    required_by: date | None = None
+    cost_ceiling_minor: int | None = Field(default=None, gt=0)
 
 
 @dataclass(frozen=True)
@@ -216,6 +236,8 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
             collected.reply_to,
             "sourcing_request",
         )
+        if snapshot.status != "SOURCING" or self._already_processed(snapshot, collected.message_id):
+            return
         self.routing_store.update(
             collected.workflow_id,
             updates={
@@ -232,11 +254,15 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
         snapshot = self._snapshot(ready.workflow_id)
         if self._already_processed(snapshot, ready.message_id):
             return
+        self._require_status(snapshot, "SOURCING")
         self._validate_correlation(snapshot, ready.correlation_id)
         if ready.reply_to != snapshot.state.get("quotes_message_id"):
             raise ValueError("plans do not answer the recorded quote collection")
         if not ready.result.plans:
             reason = "; ".join(ready.result.infeasibility_reasons) or "No feasible plan exists."
+            if snapshot.state.get("replacement_po_id"):
+                await self._replacement_unavailable(ctx, snapshot, reason, ready.message_id)
+                return
             await self._fail(ctx, snapshot, "SOURCING_INFEASIBLE", reason, ready.message_id)
             return
         status = self._advance(snapshot, "plans_ready")
@@ -254,7 +280,12 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
         await self._send_chat(
             ctx,
             snapshot.conversation_id,
-            "Supplier quotations are complete. Review the deterministic procurement plans.",
+            (
+                "Supplier cancellation is confirmed. Other orders remain active. "
+                "Review the replacement procurement plans."
+                if snapshot.state.get("replacement_po_id")
+                else "Supplier quotations are complete. Review the deterministic procurement plans."
+            ),
             procurement_plan_carousel(ready.result.plans).metadata(),
         )
 
@@ -313,6 +344,22 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
         snapshot = self.routing_store.find_active_by_conversation(conversation_id)
         if snapshot is None:
             return False
+        if selection.action == "show_plans":
+            self._require_status(snapshot, "WAITING_FOR_PLAN_APPROVAL")
+            plans = tuple(ProcurementPlan.model_validate(p) for p in snapshot.state["plans"])
+            await self._send_chat(
+                ctx,
+                snapshot.conversation_id,
+                "Review the saved procurement plans. No new supplier order has been sent.",
+                procurement_plan_carousel(plans).metadata(),
+            )
+            return True
+        if selection.action == "approve_cancel_and_replace":
+            await self._approve_cancellation(ctx, snapshot, selection)
+            return True
+        if selection.action in {"replacement_constraints", "retry_replacement", "stop_replacement"}:
+            await self._replacement_action(ctx, snapshot, selection)
+            return True
         if selection.action == "show_exception":
             self._require_status(snapshot, "WAITING_FOR_EXCEPTION_DECISION")
             await self._show_next_exception(ctx, snapshot)
@@ -335,7 +382,15 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
         ):
             await self._cancel(ctx, snapshot, "counterproposal_cancelled")
             return True
-        if selection.action in {"accept", "counter", "switch", "split", "cancel"}:
+        if selection.action in {
+            "accept",
+            "counter",
+            "switch",
+            "split",
+            "cancel",
+            "cancel_and_replace",
+            "stop_workflow",
+        }:
             await self._resolve_exception(ctx, snapshot, selection)
             return True
         if selection.action == "review_counterproposal":
@@ -384,6 +439,8 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
         submission = PurchaseOrderSubmitted.model_validate(submission_data)
         if acknowledgment.reply_to != str(submission.message_id):
             raise ValueError("acknowledgment does not answer the recorded PO submission")
+        if acknowledgment.po_id in snapshot.state.get("cancelled_po_ids", []):
+            return
         forwarded = acknowledgment.model_copy(
             update={
                 "message_id": uuid5(acknowledgment.message_id, "acknowledgment-agent"),
@@ -518,6 +575,9 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
         snapshot = self._snapshot(result.workflow_id)
         if self._already_processed(snapshot, result.message_id):
             return
+        if result.po_id in snapshot.state.get("cancelled_po_ids", []):
+            return
+        self._require_status(snapshot, "WAITING_FOR_SUPPLIER_ACK")
         self._validate_correlation(snapshot, result.correlation_id)
         acknowledgment_data = snapshot.state.get("acknowledgments", {}).get(result.po_id)
         if acknowledgment_data is None:
@@ -527,14 +587,16 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
             raise ValueError("comparison does not answer the recorded acknowledgment")
         comparisons = dict(snapshot.state.get("comparisons", {}))
         comparisons[result.po_id] = result.model_dump(mode="json")
-        po_count = len(snapshot.state.get("purchase_orders", []))
+        active_ids = {str(po.po_id) for po in self._active_purchase_orders(snapshot)}
         updates: dict[str, Any] = {"comparisons": comparisons}
         status: str | None = None
-        if len(comparisons) >= po_count:
+        if active_ids.issubset(comparisons):
             conflicts = [
                 AcknowledgmentComparisonResult.model_validate(value)
-                for value in comparisons.values()
+                for po_id, value in comparisons.items()
                 if value["comparison"]["status"] != "MATCHED"
+                and po_id in active_ids
+                and po_id not in snapshot.state.get("resolved_po_ids", [])
             ]
             status = self._advance(
                 snapshot,
@@ -563,7 +625,9 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
         return [
             AcknowledgmentComparisonResult.model_validate(value)
             for po_id, value in snapshot.state.get("comparisons", {}).items()
-            if value["comparison"]["status"] != "MATCHED" and po_id not in resolved
+            if value["comparison"]["status"] != "MATCHED"
+            and po_id not in resolved
+            and po_id not in snapshot.state.get("cancelled_po_ids", [])
         ]
 
     async def _show_next_exception(self, ctx: MessageContext, snapshot: WorkflowSnapshot) -> None:
@@ -599,6 +663,31 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
         pending_ids.add(str(snapshot.state.get("change_response", {}).get("message_id")))
         if failure.reply_to not in pending_ids:
             raise ValueError("specialist failure does not answer a pending request")
+        if (
+            failure.operation == "PURCHASE_ORDER_CANCELLATION"
+            and snapshot.status != "CANCELLING_PO"
+        ):
+            return
+        if failure.operation == "SOURCING" and snapshot.status != "SOURCING":
+            return
+        if snapshot.status == "CANCELLING_PO" and failure.reply_to == snapshot.state.get(
+            "cancellation_request", {}
+        ).get("message_id"):
+            po = self._purchase_order(
+                snapshot, snapshot.state["cancellation_request"]["purchase_order"]["po_id"]
+            )
+            await self._send_chat(
+                ctx,
+                snapshot.conversation_id,
+                "Cancellation is unconfirmed. No replacement PO can be sent; retry cancellation.",
+                cancellation_review(po, retry=True).metadata(),
+            )
+            return
+        if snapshot.status == "SOURCING" and snapshot.state.get("replacement_po_id"):
+            await self._replacement_unavailable(
+                ctx, snapshot, failure.message, UUID(failure.reply_to)
+            )
+            return
         await self._fail(
             ctx,
             snapshot,
@@ -628,6 +717,7 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
             shortages=shortages,
             required_by=required_by,
             currency=snapshot.state.get("currency", "USD"),
+            cost_ceiling_minor=snapshot.state.get("cost_ceiling_minor"),
         )
         self.routing_store.update(
             snapshot.workflow_id,
@@ -651,12 +741,10 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
             snapshot.workflow_id,
             updates={"selected_plan_id": plan.plan_id, "selected_plan_version": 1},
         )
-        await self._send_chat(
+        await self._approve_plan(
             ctx,
-            snapshot.conversation_id,
-            "Review the selected plan. Approval only selects it; purchase orders require a "
-            "separate approval.",
-            plan_approval_review(plan, 1).metadata(),
+            self._snapshot(snapshot.workflow_id),
+            CardSelection(action="approve_plan", target_id=plan.plan_id, target_version=1),
         )
 
     async def _approve_plan(
@@ -677,14 +765,20 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
             actor=snapshot.conversation_id,
             payload=plan,
         )
-        purchase_orders = purchase_orders_from_plan(snapshot.workflow_id, plan)
+        round_number = int(snapshot.state.get("replacement_round", 0))
+        purchase_orders = purchase_orders_from_plan(
+            snapshot.workflow_id, plan, round_number=round_number
+        )
+        previous_orders = snapshot.state.get("purchase_orders", []) if round_number else []
         batch_id = str(uuid5(snapshot.workflow_id, f"purchase-order-batch:{plan.plan_id}"))
         status = self._advance(snapshot, "plan_approved")
         self.routing_store.update(
             snapshot.workflow_id,
             status=status,
             updates={
-                "purchase_orders": [po.model_dump(mode="json") for po in purchase_orders],
+                "purchase_orders": previous_orders
+                + [po.model_dump(mode="json") for po in purchase_orders],
+                "pending_po_ids": [str(po.po_id) for po in purchase_orders],
                 "purchase_order_batch_id": batch_id,
                 "purchase_order_batch_version": 1,
             },
@@ -692,8 +786,8 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
         await self._send_chat(
             ctx,
             snapshot.conversation_id,
-            "The plan is selected. Review and separately approve the purchase orders before any "
-            "supplier submission.",
+            "Review the purchase orders for the selected plan. "
+            "Approve and send to submit them to suppliers.",
             purchase_order_batch_review(
                 purchase_orders, batch_id=batch_id, batch_version=1
             ).metadata(),
@@ -708,7 +802,10 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
         ) or selection.target_version != snapshot.state.get("purchase_order_batch_version"):
             raise ValueError("purchase-order approval is stale or targets a different batch")
         purchase_orders = tuple(
-            PurchaseOrder.model_validate(value) for value in snapshot.state["purchase_orders"]
+            PurchaseOrder.model_validate(value)
+            for value in snapshot.state["purchase_orders"]
+            if not snapshot.state.get("pending_po_ids")
+            or value["po_id"] in snapshot.state["pending_po_ids"]
         )
         approvals = tuple(
             self.routing_store.save_approval(
@@ -745,6 +842,256 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
             "PurchaseOrderExecutionRequest",
         )
 
+    @staticmethod
+    def _active_purchase_orders(snapshot: WorkflowSnapshot) -> tuple[PurchaseOrder, ...]:
+        cancelled = snapshot.state.get("cancelled_po_ids", [])
+        return tuple(
+            PurchaseOrder.model_validate(value)
+            for value in snapshot.state.get("purchase_orders", [])
+            if value["po_id"] not in cancelled
+        )
+
+    async def _approve_cancellation(
+        self, ctx: MessageContext, snapshot: WorkflowSnapshot, selection: CardSelection
+    ) -> None:
+        if snapshot.status == "CANCELLING_PO":
+            request = PurchaseOrderCancellationRequest.model_validate(
+                snapshot.state["cancellation_request"]
+            )
+            if (
+                selection.target_id != str(request.purchase_order.po_id)
+                or selection.target_version != request.purchase_order.version
+            ):
+                raise ValueError("cancellation approval targets another order/version")
+        else:
+            self._require_status(snapshot, "WAITING_FOR_EXCEPTION_DECISION")
+            conflicts = self._remaining_conflicts(
+                snapshot, snapshot.state.get("resolved_po_ids", [])
+            )
+            if not any(
+                c.po_id == selection.target_id and c.po_version == selection.target_version
+                for c in conflicts
+            ):
+                raise ValueError("cancellation approval is stale or targets a resolved exception")
+            po = self._purchase_order(snapshot, selection.target_id)
+            submitted = snapshot.state.get("po_submissions", {}).get(str(po.po_id))
+            if submitted is None:
+                raise ValueError("supplier transaction must exist before cancellation")
+            transaction_id = submitted["supplier_transaction_id"]
+            approval = self.routing_store.save_approval(
+                workflow_id=snapshot.workflow_id,
+                decision_type="CANCEL_PURCHASE_ORDER",
+                target_type="purchase_order",
+                target_id=str(po.po_id),
+                target_version=po.version,
+                actor=snapshot.conversation_id,
+                payload={
+                    "purchase_order": po.model_dump(mode="json"),
+                    "supplier_transaction_id": transaction_id,
+                },
+            )
+            request = PurchaseOrderCancellationRequest(
+                message_id=uuid5(po.po_id, f"cancel:{po.version}"),
+                correlation_id=UUID(snapshot.state["correlation_id"]),
+                workflow_id=snapshot.workflow_id,
+                sender_agent="manufacturing-orchestrator",
+                purchase_order=po,
+                supplier_transaction_id=transaction_id,
+                approval_id=str(approval.approval_id),
+            )
+            self.routing_store.update(
+                snapshot.workflow_id,
+                status=self._advance(snapshot, "cancellation_approved"),
+                updates={"cancellation_request": request.model_dump(mode="json")},
+            )
+        self.routing_store.update(
+            snapshot.workflow_id,
+            updates={"cancellation_last_sent_at": datetime.now(UTC).isoformat()},
+        )
+        await self._send_specialist(
+            ctx,
+            self._snapshot(snapshot.workflow_id),
+            self.procurement_address,
+            CancellationRequestTransport.from_domain(request),
+            request.message_id,
+            request.message_type,
+        )
+
+    async def handle_cancelled(self, ctx: MessageContext, result: PurchaseOrderCancelled) -> None:
+        snapshot = self._validated_reply(
+            result.workflow_id, result.correlation_id, result.reply_to, "cancellation_request"
+        )
+        if self._already_processed(snapshot, result.message_id):
+            return
+        self._require_status(snapshot, "CANCELLING_PO")
+        request = PurchaseOrderCancellationRequest.model_validate(
+            snapshot.state["cancellation_request"]
+        )
+        po = request.purchase_order
+        if (
+            result.po_id != str(po.po_id)
+            or result.supplier_id != po.supplier_id
+            or result.receipt.supplier_transaction_id != request.supplier_transaction_id
+            or result.receipt.po_number != po.po_number
+            or result.receipt.po_version != po.version
+        ):
+            raise ValueError("cancellation confirmation does not match the approved request")
+        self._audit_received(result)
+        cancelled = list(snapshot.state.get("cancelled_po_ids", []))
+        cancelled.append(str(po.po_id))
+        receipts = dict(snapshot.state.get("cancellation_receipts", {}))
+        receipts[str(po.po_id)] = result.receipt.model_dump(mode="json")
+        excluded = sorted(
+            set(snapshot.state.get("replacement_excluded_suppliers", [])) | {po.supplier_id}
+        )
+        self.routing_store.update(
+            snapshot.workflow_id,
+            status=self._advance(snapshot, "supplier_cancelled"),
+            updates={
+                "cancelled_po_ids": cancelled,
+                "cancellation_receipts": receipts,
+                "replacement_po_id": str(po.po_id),
+                "replacement_excluded_suppliers": excluded,
+                "replacement_round": int(snapshot.state.get("replacement_round", 0)) + 1,
+                "replacement_attempt": 1,
+                "replacement_sourcing_pending": True,
+            },
+            inbound_message_id=result.message_id,
+        )
+        # ASI:One can finish the pending turn on its first chat reply. Send the final
+        # plans/retry card as that reply rather than a preceding plain-text progress message.
+        await self._dispatch_replacement(ctx, self._snapshot(snapshot.workflow_id))
+
+    async def _dispatch_replacement(self, ctx: MessageContext, snapshot: WorkflowSnapshot) -> None:
+        po = self._purchase_order(snapshot, snapshot.state["replacement_po_id"])
+        deadline = (
+            snapshot.state.get("required_by_override")
+            or snapshot.state["inventory_result"]["assessment"]["required_by"]
+        )
+        shortages: dict[str, int] = {}
+        for line in po.lines:
+            shortages[line.component_sku] = shortages.get(line.component_sku, 0) + int(
+                line.quantity.to_integral_value(rounding=ROUND_CEILING)
+            )
+        total_minor, _, _, _ = self._completion_details(snapshot)
+        ceiling = snapshot.state.get("cost_ceiling_minor")
+        remaining = ceiling - total_minor if ceiling is not None else None
+        if remaining is not None and remaining <= 0:
+            await self._replacement_unavailable(
+                ctx,
+                snapshot,
+                "Retained orders use the budget. Revise the total budget or stop.",
+                uuid5(
+                    snapshot.workflow_id,
+                    f"replacement-budget:{snapshot.state['replacement_round']}:{snapshot.state['replacement_attempt']}",
+                ),
+            )
+            return
+        request = SourcingRequest(
+            message_id=uuid5(
+                snapshot.workflow_id,
+                f"replacement-sourcing:{snapshot.state['replacement_round']}:{snapshot.state['replacement_attempt']}",
+            ),
+            workflow_id=snapshot.workflow_id,
+            correlation_id=UUID(snapshot.state["correlation_id"]),
+            sender_agent="manufacturing-orchestrator",
+            shortages=shortages,
+            required_by={sku: deadline for sku in shortages},
+            currency=po.currency,
+            excluded_supplier_ids=tuple(snapshot.state["replacement_excluded_suppliers"]),
+            strict_deadline=True,
+            cost_ceiling_minor=remaining,
+        )
+        self.routing_store.update(
+            snapshot.workflow_id,
+            updates={
+                "sourcing_request": request.model_dump(mode="json"),
+                "replacement_last_sent_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        await self._send_specialist(
+            ctx,
+            snapshot,
+            self.sourcing_address,
+            SourcingRequestTransport.from_domain(request),
+            request.message_id,
+            request.message_type,
+        )
+        self.routing_store.update(
+            snapshot.workflow_id, updates={"replacement_sourcing_pending": False}
+        )
+
+    async def _replacement_unavailable(
+        self, ctx: MessageContext, snapshot: WorkflowSnapshot, reason: str, message_id: UUID
+    ) -> None:
+        self.routing_store.update(
+            snapshot.workflow_id,
+            status=self._advance(snapshot, "replacement_unavailable"),
+            updates={"replacement_error": reason, "replacement_sourcing_pending": False},
+            inbound_message_id=message_id,
+        )
+        await self._send_chat(
+            ctx,
+            snapshot.conversation_id,
+            "No replacement plan currently meets the constraints. No replacement PO was sent.",
+            replacement_options(
+                str(snapshot.workflow_id), snapshot.state["replacement_round"], reason
+            ).metadata(),
+        )
+
+    async def _replacement_action(
+        self, ctx: MessageContext, snapshot: WorkflowSnapshot, selection: CardSelection
+    ) -> None:
+        self._require_status(snapshot, "WAITING_FOR_REPLACEMENT")
+        if selection.target_id != str(
+            snapshot.workflow_id
+        ) or selection.target_version != snapshot.state.get("replacement_round"):
+            raise ValueError("replacement decision targets a stale workflow/round")
+        if selection.action == "stop_replacement":
+            await self._cancel(ctx, snapshot, "replacement_stopped")
+            return
+        if selection.action == "replacement_constraints":
+            await self._send_chat(
+                ctx,
+                snapshot.conversation_id,
+                "Blank fields keep current constraints. Budget includes retained orders.",
+                replacement_constraints(
+                    str(snapshot.workflow_id), snapshot.state["replacement_round"]
+                ).metadata(),
+            )
+            return
+        revised = ReplacementConstraints.model_validate(
+            {k: v for k, v in selection.values.items() if v not in (None, "", 0)}
+        )
+        updates: dict[str, Any] = {
+            "replacement_attempt": int(snapshot.state["replacement_attempt"]) + 1,
+            "replacement_sourcing_pending": True,
+        }
+        if revised.required_by is not None:
+            updates["required_by_override"] = revised.required_by.isoformat()
+        if revised.cost_ceiling_minor is not None:
+            updates["cost_ceiling_minor"] = revised.cost_ceiling_minor
+        self.routing_store.update(
+            snapshot.workflow_id,
+            status=self._advance(snapshot, "replacement_retry"),
+            updates=updates,
+        )
+        if self.audit is not None:
+            self.audit.append_event(
+                workflow_id=snapshot.workflow_id,
+                actor_type="HUMAN",
+                actor_id=snapshot.conversation_id,
+                action="REPLACEMENT_CONSTRAINTS_UPDATED",
+                entity_type="workflow",
+                entity_id=str(snapshot.workflow_id),
+                before={
+                    "budget": snapshot.state.get("cost_ceiling_minor"),
+                    "deadline": snapshot.state.get("required_by_override"),
+                },
+                after=updates,
+            )
+        await self._dispatch_replacement(ctx, self._snapshot(snapshot.workflow_id))
+
     async def _resolve_exception(
         self, ctx: MessageContext, snapshot: WorkflowSnapshot, selection: CardSelection
     ) -> None:
@@ -757,6 +1104,16 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
             raise ValueError("exception decision targets a stale purchase-order version")
         if comparison.po_id in snapshot.state.get("resolved_po_ids", []):
             raise ValueError("this purchase-order exception was already resolved")
+        if comparison.po_id in snapshot.state.get("cancelled_po_ids", []):
+            raise ValueError("this supplier order is already cancelled")
+        if selection.action in {"cancel", "cancel_and_replace"}:
+            await self._send_chat(
+                ctx,
+                snapshot.conversation_id,
+                "Review this PO cancellation. Replacement orders need separate approvals.",
+                cancellation_review(self._purchase_order(snapshot, comparison.po_id)).metadata(),
+            )
+            return
         if selection.action == "counter":
             self.routing_store.update(
                 snapshot.workflow_id,
@@ -943,9 +1300,16 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
         purchase_orders = [
             PurchaseOrder.model_validate(value)
             for value in snapshot.state.get("purchase_orders", [])
+            if value["po_id"] not in snapshot.state.get("cancelled_po_ids", [])
         ]
         assessment = snapshot.state.get("inventory_result", {}).get("assessment", {})
-        deadline = date.fromisoformat(assessment["required_by"]) if assessment else None
+        deadline = (
+            date.fromisoformat(
+                snapshot.state.get("required_by_override", assessment["required_by"])
+            )
+            if assessment
+            else None
+        )
         feasible = selected is None or selected.total_late_days == 0
         total = Decimal("0")
         commitments: list[dict[str, Any]] = []
@@ -1103,6 +1467,23 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
                 received_at=datetime.now(UTC),
             )
         if failed:
+            current = self._snapshot(snapshot.workflow_id)
+            if current.status == "CANCELLING_PO":
+                po = self._purchase_order(
+                    current, current.state["cancellation_request"]["purchase_order"]["po_id"]
+                )
+                await self._send_chat(
+                    ctx,
+                    current.conversation_id,
+                    "Cancellation delivery failed. No replacement PO was sent; retry.",
+                    cancellation_review(po, retry=True).metadata(),
+                )
+                return
+            if current.status == "SOURCING" and current.state.get("replacement_po_id"):
+                await self._replacement_unavailable(
+                    ctx, current, "The sourcing agent could not be reached.", message_id
+                )
+                return
             await self._fail(
                 ctx,
                 self._snapshot(snapshot.workflow_id),
@@ -1135,10 +1516,40 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
                     sent_at=datetime.now(UTC),
                     received_at=datetime.now(UTC),
                 )
+        # Also recover a delivered cancellation whose response was lost, or a crash between
+        # persisting supplier cancellation and recording the replacement sourcing outbox entry.
+        pending_replacements = getattr(self.routing_store, "pending_replacements", lambda: ())
+        for snapshot in pending_replacements():
+            field = (
+                "cancellation_last_sent_at"
+                if snapshot.status == "CANCELLING_PO"
+                else "replacement_last_sent_at"
+            )
+            last = snapshot.state.get(field)
+            if last and (datetime.now(UTC) - datetime.fromisoformat(last)).total_seconds() < 60:
+                continue
+            if snapshot.status == "CANCELLING_PO":
+                request = PurchaseOrderCancellationRequest.model_validate(
+                    snapshot.state["cancellation_request"]
+                )
+                await self._approve_cancellation(
+                    ctx,
+                    snapshot,
+                    CardSelection(
+                        action="approve_cancel_and_replace",
+                        target_id=str(request.purchase_order.po_id),
+                        target_version=request.purchase_order.version,
+                    ),
+                )
+            else:
+                await self._dispatch_replacement(ctx, snapshot)
 
     @staticmethod
     def _outbound_wire(pending: PendingOutbound) -> object:
         builders: dict[str, Any] = {
+            "PurchaseOrderCancellationRequest": lambda: CancellationRequestTransport.from_domain(
+                PurchaseOrderCancellationRequest.model_validate_json(pending.payload_json)
+            ),
             "DemandPlanningRequest": lambda: DemandPlanningTransport.from_domain(
                 DemandPlanningRequest.model_validate_json(pending.payload_json)
             ),
@@ -1263,6 +1674,12 @@ def build_specialist_response_protocol(
     coordinator: OrchestrationCoordinator, *, recovery_interval_seconds: float = 2
 ) -> AgentProtocol:
     protocol = AgentProtocol(name="SupplyMeshOrchestratorSpecialists", version="1.0.0")
+
+    @protocol.on_message(PurchaseOrderCancelledTransport)
+    async def cancelled(ctx: Context, sender: str, msg: PurchaseOrderCancelledTransport) -> None:
+        await _bounded(
+            ctx, coordinator.handle_cancelled, msg, sender, coordinator.procurement_address
+        )
 
     @protocol.on_message(SupplierQuotesCollectedTransport)
     async def quotes(ctx: Context, sender: str, msg: SupplierQuotesCollectedTransport) -> None:

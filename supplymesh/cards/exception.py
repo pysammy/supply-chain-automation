@@ -54,12 +54,14 @@ def exception_review(comparison: AcknowledgmentComparison, *, po: PurchaseOrder)
                     *discrepancy_nodes,
                     *[
                         {
+                            "label": "Cancel and replace" if action == "cancel" else action.title(),
                             "type": "button",
-                            "label": action.title(),
-                            "primary": action == "counter",
+                            "primary": False,
                             "action": {
                                 "selection": {
-                                    "action": action,
+                                    "action": "cancel_and_replace"
+                                    if action == "cancel"
+                                    else action,
                                     "target_id": str(po.po_id),
                                     "target_version": po.version,
                                 }
@@ -68,6 +70,18 @@ def exception_review(comparison: AcknowledgmentComparison, *, po: PurchaseOrder)
                         for action in comparison.allowed_actions
                         if action not in {"switch", "split"}
                     ],
+                    {
+                        "label": "Stop workflow",
+                        "type": "button",
+                        "primary": False,
+                        "action": {
+                            "selection": {
+                                "action": "stop_workflow",
+                                "target_id": str(po.po_id),
+                                "target_version": po.version,
+                            }
+                        },
+                    },
                 ],
             }
         },

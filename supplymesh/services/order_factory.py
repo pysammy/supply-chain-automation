@@ -7,7 +7,7 @@ from supplymesh.domain.sourcing import PlanAllocation, ProcurementPlan
 
 
 def purchase_orders_from_plan(
-    workflow_id: UUID, plan: ProcurementPlan
+    workflow_id: UUID, plan: ProcurementPlan, *, round_number: int = 0
 ) -> tuple[PurchaseOrder, ...]:
     """Convert a selected optimizer result into stable, supplier-grouped purchase orders."""
     by_supplier: dict[str, list[PlanAllocation]] = defaultdict(list)
@@ -35,10 +35,16 @@ def purchase_orders_from_plan(
             for index, allocation in enumerate(allocations, start=1)
         )
         po_id = uuid5(workflow_id, f"{plan.plan_id}:{supplier_id}:v1")
+        suffix = f"-{supplier_index:02d}"
+        if round_number:
+            po_id = uuid5(
+                workflow_id, f"replacement:{round_number}:{plan.plan_id}:{supplier_id}:v1"
+            )
+            suffix = f"-R{round_number:02d}-{supplier_index:02d}"
         purchase_orders.append(
             PurchaseOrder(
                 po_id=po_id,
-                po_number=f"SM-{workflow_id.hex[:10].upper()}-{supplier_index:02d}",
+                po_number=f"SM-{workflow_id.hex[:10].upper()}{suffix}",
                 workflow_id=workflow_id,
                 supplier_id=supplier_id,
                 version=1,

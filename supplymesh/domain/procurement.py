@@ -32,7 +32,11 @@ class ApprovalRecord(DomainModel):
     approval_id: UUID
     workflow_id: UUID
     decision_type: Literal[
-        "SELECT_PLAN", "SEND_PURCHASE_ORDER", "ACCEPT_EXCEPTION", "SEND_COUNTERPROPOSAL"
+        "SELECT_PLAN",
+        "SEND_PURCHASE_ORDER",
+        "ACCEPT_EXCEPTION",
+        "SEND_COUNTERPROPOSAL",
+        "CANCEL_PURCHASE_ORDER",
     ]
     target_type: str
     target_id: str
@@ -59,6 +63,19 @@ class PurchaseOrderSubmission(ManufacturerSubmission):
     x12: str
 
 
+class PurchaseOrderCancellation(ManufacturerSubmission):
+    po_number: str = Field(min_length=1, max_length=100)
+    po_version: int = Field(ge=1)
+
+
+class SupplierCancellationConfirmed(DomainModel):
+    supplier_transaction_id: str
+    po_number: str
+    po_version: int
+    status: Literal["CANCELLED"] = "CANCELLED"
+    cancelled_at: datetime
+
+
 class SupplierTransactionAccepted(DomainModel):
     supplier_transaction_id: str
     status: Literal["PROCESSING"] = "PROCESSING"
@@ -67,7 +84,7 @@ class SupplierTransactionAccepted(DomainModel):
 
 
 class SupplierTransactionStatus(DomainModel):
-    status: Literal["PROCESSING", "ACKNOWLEDGED"]
+    status: Literal["PROCESSING", "ACKNOWLEDGED", "CANCELLED"]
     retry_after_seconds: int | None = Field(default=None, ge=0)
     document_type: Literal["855"] | None = None
     x12: str | None = None

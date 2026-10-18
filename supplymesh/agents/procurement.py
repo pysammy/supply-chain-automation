@@ -8,6 +8,10 @@ from pydantic import ValidationError
 from uagents import Context
 from uagents import Protocol as AgentProtocol
 
+from supplymesh.agents.cancellation_transport import (
+    CancellationRequestTransport,
+    PurchaseOrderCancelledTransport,
+)
 from supplymesh.agents.transport import (
     AcknowledgmentReceivedTransport,
     ChangeOrderSubmittedTransport,
@@ -22,6 +26,7 @@ from supplymesh.domain.procurement import (
     ChangeTransactionStatus,
     Counterproposal,
     PurchaseOrder,
+    SupplierCancellationConfirmed,
     SupplierTransactionAccepted,
     SupplierTransactionStatus,
 )
@@ -33,9 +38,12 @@ from supplymesh.protocols.procurement import (
     ChangeOrderSubmitted,
     ChangeResponseReceived,
     CounterproposalExecutionRequest,
+    PurchaseOrderCancellationRequest,
+    PurchaseOrderCancelled,
     PurchaseOrderExecutionRequest,
     PurchaseOrderSubmitted,
 )
+from supplymesh.services.approval_service import verify_approval
 from supplymesh.services.counterproposal_service import (
     ChangeOrderGateway,
     counterproposal_idempotency_key,
@@ -51,6 +59,16 @@ from supplymesh.services.procurement_service import (
 
 
 class ProcurementGateway(PurchaseOrderGateway, ChangeOrderGateway, Protocol):
+    async def cancel_purchase_order(
+        self,
+        supplier_id: str,
+        transaction_id: str,
+        po_number: str,
+        po_version: int,
+        *,
+        correlation_id: str,
+        idempotency_key: str,
+    ) -> SupplierCancellationConfirmed: ...
     async def get_purchase_order_status(
         self, supplier_id: str, transaction_id: str, *, correlation_id: str
     ) -> SupplierTransactionStatus: ...
@@ -61,6 +79,7 @@ class ProcurementGateway(PurchaseOrderGateway, ChangeOrderGateway, Protocol):
 
 
 class ProcurementState(Protocol):
+    def record_cancellation(self, po_id: UUID) -> None: ...
     def get_approval(self, approval_id: str) -> ApprovalRecord: ...
 
     def save_approved_purchase_order(self, po: PurchaseOrder) -> None: ...
@@ -156,6 +175,48 @@ class ProcurementAgentService:
         self.poll_interval_seconds = poll_interval_seconds
         self.poll_timeout_seconds = poll_timeout_seconds
         self.recovery_owner = f"procurement-{uuid4()}"
+
+    async def cancel_purchase_order(
+        self, request: PurchaseOrderCancellationRequest
+    ) -> PurchaseOrderCancelled:
+        po = request.purchase_order
+        if po.workflow_id != request.workflow_id:
+            raise ValueError("cancellation targets another workflow")
+        verify_approval(
+            self.state.get_approval(request.approval_id),
+            expected_decision_type="CANCEL_PURCHASE_ORDER",
+            target_id=str(po.po_id),
+            target_version=po.version,
+            current_payload={
+                "purchase_order": po.model_dump(mode="json"),
+                "supplier_transaction_id": request.supplier_transaction_id,
+            },
+        )
+        receipt = await self.gateway.cancel_purchase_order(
+            po.supplier_id,
+            request.supplier_transaction_id,
+            po.po_number,
+            po.version,
+            correlation_id=str(request.correlation_id),
+            idempotency_key=f"cancel:{po.po_id}:{po.version}",
+        )
+        if (
+            receipt.supplier_transaction_id != request.supplier_transaction_id
+            or receipt.po_number != po.po_number
+            or receipt.po_version != po.version
+        ):
+            raise ValueError("supplier cancellation does not match approved order")
+        self.state.record_cancellation(po.po_id)
+        return PurchaseOrderCancelled(
+            message_id=uuid5(request.message_id, "cancellation-confirmed"),
+            correlation_id=request.correlation_id,
+            workflow_id=request.workflow_id,
+            sender_agent=self.name,
+            reply_to=str(request.message_id),
+            po_id=str(po.po_id),
+            supplier_id=po.supplier_id,
+            receipt=receipt,
+        )
 
     async def execute_purchase_orders(
         self, request: PurchaseOrderExecutionRequest, *, reply_address: str
@@ -541,6 +602,22 @@ def build_procurement_protocol(
     protocol = AgentProtocol(name="SupplyMeshProcurementExecution", version="1.0.0")
 
     @protocol.on_message(
+        CancellationRequestTransport,
+        replies={PurchaseOrderCancelledTransport, SpecialistFailureTransport},
+    )
+    async def cancel(ctx: Context, sender: str, msg: CancellationRequestTransport) -> None:
+        if orchestrator_address is not None and sender != orchestrator_address:
+            ctx.logger.warning("rejected unauthorized cancellation caller")
+            return
+        worker = service(ctx) if callable(service) else service
+        try:
+            result = await worker.cancel_purchase_order(msg.to_domain())
+            await ctx.send(sender, PurchaseOrderCancelledTransport.from_domain(result))
+        except Exception:
+            ctx.logger.warning("supplier cancellation was not confirmed")
+            await _send_failure(ctx, sender, msg, worker.name, "PURCHASE_ORDER_CANCELLATION")
+
+    @protocol.on_message(
         PurchaseOrderExecutionTransport,
         replies={
             PurchaseOrderSubmittedTransport,
@@ -641,7 +718,9 @@ def build_procurement_protocol(
 async def _send_failure(
     ctx: Context,
     sender: str,
-    msg: PurchaseOrderExecutionTransport | CounterproposalExecutionTransport,
+    msg: PurchaseOrderExecutionTransport
+    | CounterproposalExecutionTransport
+    | CancellationRequestTransport,
     agent_name: str,
     operation: str,
 ) -> None:

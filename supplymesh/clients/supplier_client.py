@@ -7,7 +7,9 @@ import httpx
 from supplymesh.domain.procurement import (
     ChangeOrderSubmission,
     ChangeTransactionStatus,
+    PurchaseOrderCancellation,
     PurchaseOrderSubmission,
+    SupplierCancellationConfirmed,
     SupplierTransactionAccepted,
     SupplierTransactionStatus,
 )
@@ -143,6 +145,30 @@ class SupplierClient:
             )
             response.raise_for_status()
             return SupplierTransactionStatus.model_validate(response.json())
+
+    async def cancel_purchase_order(
+        self,
+        supplier_id: str,
+        transaction_id: str,
+        request: PurchaseOrderCancellation,
+        *,
+        correlation_id: str,
+        idempotency_key: str,
+    ) -> SupplierCancellationConfirmed:
+        async with httpx.AsyncClient(
+            base_url=self.base_url, timeout=self.timeout, transport=self.transport
+        ) as client:
+            response = await client.post(
+                f"/api/v1/suppliers/{supplier_id}/purchase-orders/{transaction_id}/cancel",
+                json=request.model_dump(mode="json"),
+                headers={
+                    "X-API-Key": self.api_key,
+                    "X-Correlation-ID": correlation_id,
+                    "Idempotency-Key": idempotency_key,
+                },
+            )
+            response.raise_for_status()
+            return SupplierCancellationConfirmed.model_validate(response.json())
 
     async def submit_change_order(
         self,

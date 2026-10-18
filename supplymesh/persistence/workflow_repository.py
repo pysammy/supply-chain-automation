@@ -23,6 +23,7 @@ class ConnectivitySession:
     chat_message_id: UUID
     status: str
     currency: str = "USD"
+    cost_ceiling_minor: int | None = None
 
 
 @dataclass(frozen=True)
@@ -104,6 +105,17 @@ class WorkflowRepository:
                 .limit(1)
             )
             return self._snapshot(record) if record is not None else None
+
+    def pending_replacements(self) -> tuple[WorkflowSnapshot, ...]:
+        with self.session_factory() as session:
+            rows = session.scalars(
+                select(WorkflowRun).where(WorkflowRun.status.in_(("CANCELLING_PO", "SOURCING")))
+            )
+            return tuple(
+                self._snapshot(row)
+                for row in rows
+                if row.status == "CANCELLING_PO" or row.state.get("replacement_sourcing_pending")
+            )
 
     def snapshot(self, workflow_id: UUID) -> WorkflowSnapshot | None:
         with self.session_factory() as session:
@@ -216,7 +228,11 @@ class WorkflowRepository:
         *,
         workflow_id: UUID,
         decision_type: Literal[
-            "SELECT_PLAN", "SEND_PURCHASE_ORDER", "ACCEPT_EXCEPTION", "SEND_COUNTERPROPOSAL"
+            "SELECT_PLAN",
+            "SEND_PURCHASE_ORDER",
+            "ACCEPT_EXCEPTION",
+            "SEND_COUNTERPROPOSAL",
+            "CANCEL_PURCHASE_ORDER",
         ],
         target_type: str,
         target_id: str,
@@ -332,12 +348,13 @@ class WorkflowRepository:
             )
 
     @staticmethod
-    def _state(session_state: ConnectivitySession) -> dict[str, str]:
+    def _state(session_state: ConnectivitySession) -> dict[str, Any]:
         return {
             "correlation_id": str(session_state.correlation_id),
             "request_message_id": str(session_state.request_message_id),
             "chat_message_id": str(session_state.chat_message_id),
             "currency": session_state.currency,
+            "cost_ceiling_minor": session_state.cost_ceiling_minor,
         }
 
     @staticmethod
@@ -351,6 +368,7 @@ class WorkflowRepository:
             chat_message_id=UUID(state["chat_message_id"]),
             status=record.status,
             currency=state.get("currency", "USD"),
+            cost_ceiling_minor=state.get("cost_ceiling_minor"),
         )
 
     @staticmethod

@@ -1,6 +1,10 @@
 from typing import Literal
 
-from supplymesh.domain.procurement import Counterproposal, PurchaseOrder
+from supplymesh.domain.procurement import (
+    Counterproposal,
+    PurchaseOrder,
+    SupplierCancellationConfirmed,
+)
 from supplymesh.protocols.common import MessageEnvelope
 
 
@@ -18,6 +22,20 @@ class PurchaseOrderExecutionRequest(MessageEnvelope):
     purchase_orders: tuple[PurchaseOrder, ...]
     approval_id: str
     approval_ids: tuple[str, ...] = ()
+
+
+class PurchaseOrderCancellationRequest(MessageEnvelope):
+    message_type: Literal["PurchaseOrderCancellationRequest"] = "PurchaseOrderCancellationRequest"
+    purchase_order: PurchaseOrder
+    supplier_transaction_id: str
+    approval_id: str
+
+
+class PurchaseOrderCancelled(MessageEnvelope):
+    message_type: Literal["PurchaseOrderCancelled"] = "PurchaseOrderCancelled"
+    po_id: str
+    supplier_id: str
+    receipt: SupplierCancellationConfirmed
 
 
 class PurchaseOrderSubmitted(MessageEnvelope):

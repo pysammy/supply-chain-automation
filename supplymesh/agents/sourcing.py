@@ -44,11 +44,14 @@ class SourcingAgentService:
     async def collect(
         self, request: SourcingRequest, *, now: datetime | None = None
     ) -> SupplierQuotesCollected:
+        suppliers = tuple(s for s in self.supplier_ids if s not in request.excluded_supplier_ids)
+        if not suppliers:
+            raise RuntimeError("no alternative suppliers remain")
         return await collect_quotes(
             request,
-            self.supplier_ids,
+            suppliers,
             self.gateway,
-            minimum_valid_quotes=self.minimum_valid_quotes,
+            minimum_valid_quotes=1 if request.excluded_supplier_ids else self.minimum_valid_quotes,
             now=now,
         )
 
@@ -60,7 +63,19 @@ class SourcingAgentService:
         fx_to_target: dict[str, Decimal],
     ) -> ProcurementPlansReady:
         lines = normalize_quotes(collected.quotes, request.required_by, fx_to_target)
-        result = optimize_plans(request.shortages, lines, currency=request.currency)
+        if request.strict_deadline:
+            lines = tuple(
+                line
+                for line in lines
+                if line.promised_date <= line.required_by
+                and line.supplier_id not in request.excluded_supplier_ids
+            )
+        result = optimize_plans(
+            request.shortages,
+            lines,
+            currency=request.currency,
+            cost_ceiling_minor=request.cost_ceiling_minor,
+        )
         return ProcurementPlansReady(
             correlation_id=request.correlation_id,
             workflow_id=request.workflow_id,

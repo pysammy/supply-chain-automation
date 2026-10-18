@@ -56,6 +56,13 @@ class PendingSupplierTransaction:
 
 
 class ProcurementRepository:
+    def record_cancellation(self, po_id: UUID) -> None:
+        with self.session_factory() as session, session.begin():
+            row = session.get(PurchaseOrderRecord, po_id)
+            if row is None:
+                raise ValueError("cancelled PO is not recorded locally")
+            row.status = "CANCELLED"
+
     def __init__(self, session_factory: Callable[[], Session]) -> None:
         self.session_factory = session_factory
 

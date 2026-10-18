@@ -8,10 +8,10 @@ means the cited automated test or reproducible command passed; unchecked items a
 ## Executed locally
 
 - [x] Ruff formatting and linting: `uv run ruff format --check . && uv run ruff check .`
-- [x] Strict typing for 48 agent/domain/persistence/protocol/service source files:
+- [x] Strict typing for 49 agent/domain/persistence/protocol/service source files:
   `.venv/bin/mypy`.
-- [x] Automated suite: 185 passed with `.venv/bin/python -m pytest -q
-  --cov=supplymesh --cov=apps --cov-report=term:skip-covered`.
+- [x] Automated suite: 195 passed with `.venv/bin/python -m pytest -q`.
+  The preceding coverage run had 194 passing tests and 91% source coverage.
 - [x] Exception cards identify the supplier and PO, and map each discrepancy's PO line number to
   its component SKU. Pending exception cards can be redisplayed without changing workflow state.
 - [x] Inventory assessment rounds aggregated EA requirements up and available whole-part counts
@@ -22,7 +22,16 @@ means the cited automated test or reproducible command passed; unchecked items a
   presents View completion without immediately replacing the assessment.
 - [x] Supplier REST quotations cover every component in the demo motorcycle BOM; a regression
   sources 20 of each component and verifies all five plans cover every shortage.
-- [x] Full `supplymesh` plus `apps` source coverage: 90% (`pytest-cov`).
+- [x] Full `supplymesh` plus `apps` source coverage: 91% (`pytest-cov`).
+- [x] Supplier cancellation/replacement: ten handler/HTTP integration cases cover cancellation
+  approval, replacement selection and PO approval, retained orders/reservations, lost replies,
+  failed cancellation, budget/deadline retries, stale/foreign decisions, repeated exceptions,
+  unavailable alternatives, cancellation history, late-change rejection, and final totals.
+- [x] Migration `0009` upgrade/downgrade/re-upgrade and schema parity passed in a disposable
+  PostgreSQL database. Eight concurrent cancellation requests returned one identical receipt;
+  restart retained cancellation status and original EDI evidence. The demo database was untouched.
+- [ ] New cancellation/replacement cards and complete loop verified live in ASI:One after
+  deployment. See [replacement sourcing](replacement-sourcing.md).
 - [x] Supplier history: new POs/changes persist manufacturer identity, original terms and supplier
   responses. Restart/reset replay, filters, pagination, changed-term rejection, atomic failure,
   and direct public Supplier history cards are covered through real HTTP/protocol handlers.
@@ -63,12 +72,13 @@ means the cited automated test or reproducible command passed; unchecked items a
 - [x] BOM, scrap factor, available-to-promise, tentative reservation, and shortage math are tested.
 - [x] Three configuration-driven suppliers return distinct REST quotes.
 - [x] OR-Tools returns five named plans and reports infeasibility without fabrication.
-- [x] Separate human approvals gate plan selection and PO sending in the workflow.
+- [x] Runtime plan selection opens the PO review directly. Explicit human approval still gates
+  supplier submission; normal and replacement handler tests verify selection sends no PO.
 - [x] X12 850 generation, supplier submission, idempotency, and 855 polling are tested.
 - [x] Exact 855 reaches the matching/completion path.
 - [x] Conflicting 855 creates typed severity, cost, quantity, production, and schedule impact.
-- [x] Runtime exception actions support accept, counter, and cancel. Switch/split replacement
-  requires operator review and is not offered on demo cards.
+- [x] Runtime exception actions support accept, counter, confirmed whole-PO cancellation followed
+  by replacement sourcing, and local stop. Partial-line switch/split is not offered on demo cards.
 - [x] Human-approved X12 860 and accepted 865 loop is tested end to end.
 - [x] Duplicate PO calls return the original supplier transaction.
 - [x] Workflow resumes from PostgreSQL after graph/checkpointer reconstruction.
@@ -106,7 +116,7 @@ means the cited automated test or reproducible command passed; unchecked items a
 - [x] Inventory, sourcing, procurement, and acknowledgment specialists publish real typed uAgent
   handlers. Focused integration tests cover quotes/plans, approval-gated 850/855, approved 860/865,
   exact acknowledgment comparison, malformed EDI, correlation, and bounded failures.
-- [x] Orchestrator ACP card handlers drive Inventory, Sourcing, separate plan/PO approvals,
+- [x] Orchestrator ACP card handlers drive Inventory, Sourcing, plan selection and PO approval,
   Procurement, Acknowledgment, exact completion, exception review, and the approved 860/865 loop;
   every callback is checked by the LangGraph event-transition reducer.
 - [x] Orchestrator and all specialists exchange typed uAgents contracts in handler-level integration

@@ -102,6 +102,7 @@ def parse_card_selection(raw: str) -> CardSelection | None:
                 "required_by",
             },
             "supplier_history": {"manufacturer_id", "supplier_id"},
+            "retry_replacement": {"required_by", "cost_ceiling_minor"},
             "supplier_rfq": {
                 "operation",
                 "supplier_id",

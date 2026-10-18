@@ -77,7 +77,7 @@ six-agent flow. See [payment setup and behavior](docs/payments.md).
    supplier profiles through the Supplier Agent.
    Calls sharing a uAgents session are serialized to keep replies correctly correlated.
 5. Produce cheapest, fastest, balanced, risk-aware, and split plans with OR-Tools.
-6. Pause for plan approval, then pause separately before sending purchase orders.
+6. Select a plan to prepare its purchase orders, then review and approve before sending them.
 7. Persist the approved PO, raw X12 850, supplier-transaction intent, and outbound agent message
    before sending; journal every idempotent external side effect before and after the call.
    The supported 850 subset carries one requested date per supplier PO, so multi-line POs use the
@@ -88,8 +88,10 @@ six-agent flow. See [payment setup and behavior](docs/payments.md).
 9. Persist the acknowledgment in `READY_TO_DELIVER` before sending it to the Orchestrator and
    Acknowledgment Agent. A restart replays the same stable message IDs without resubmitting the PO.
 10. Commit tentative reservations for exact/accepted supply, or release them on cancellation. For
-    material differences, pause for accept, counter, or cancel. Supplier replacement requires
-    operator review in the demo.
+    material differences, pause for accept, counter, or cancel and find replacement. Replacement
+    requires separate cancellation approval and confirmed supplier cancellation. Unaffected orders
+    remain active; select a replacement plan and approve its new POs before sending. See
+    [replacement sourcing](docs/replacement-sourcing.md).
 11. A human-approved counterproposal follows the same durable intent/journal/recovery sequence for
     X12 860 and persists the supplier's X12 865 response.
 
@@ -222,8 +224,8 @@ for both 850/855 and 860/865. It also covers exclusive recovery leases, durable 
 replay, reservation commit/release, malformed EDI evidence, and runtime activity-card delivery.
 The Fetch integration tests drive the card conversation through registered protocol handlers from
 demand intake to Inventory, Sourcing, Procurement, Acknowledgment, and final completion. They
-verify strict wire serialization/correlation, durable message deduplication, separate plan/PO/change
-approvals, persisted outbound delivery state, exact acknowledgments, and the 860/865 counterproposal
+verify strict wire serialization/correlation, durable message deduplication, plan selection,
+PO/change approvals, persisted outbound delivery state, exact acknowledgments, and the 860/865 counterproposal
 loop. Specialist integration tests also exercise bounded failures independently. CI repeats
 formatting, linting, strict
 agent/domain/persistence/protocol/service typing, tests, migrations, and drift checks.
@@ -259,8 +261,10 @@ Human plan selection, PO approval, exception decisions, and counterproposal appr
 against the current persisted target/version. Outbound specialist messages and their typed payloads
 are recorded before delivery and updated afterward; pending messages are replayed with the same IDs
 after restart, and duplicate inbound message IDs are ignored. Exact 855 results
-complete the conversation, while conflicts expose accept, counter, or cancel actions.
-Switch/split replacement and plan modification are not offered in the demo. The counter path
+complete the conversation, while conflicts expose accept, counter, cancel and find replacement,
+or stop workflow. Whole-PO replacement preserves unaffected orders, excludes cancelled suppliers,
+and uses unique replacement PO numbers. Partial-line switch/split and plan modification are not
+offered in the demo. The counter path
 routes the 860/865 exchange back through the
 Acknowledgment Agent. Completion includes a compact activity summary built from persisted message
 and transition evidence. Live Agentverse/ASI:One rendering remains a deployment verification item.

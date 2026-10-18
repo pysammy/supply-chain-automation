@@ -86,6 +86,7 @@ class FetchConnectivityCoordinator:
                 chat_message_id=chat_message_id,
                 status="INVENTORY_PLANNING",
                 currency=intake.currency,
+                cost_ceiling_minor=intake.cost_ceiling_minor,
             )
         )
         self._record_inventory_delivery(request, "PENDING")

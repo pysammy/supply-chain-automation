@@ -20,7 +20,7 @@ def procurement_plan_carousel(plans: tuple[ProcurementPlan, ...]) -> CardEnvelop
                     ),
                     "secondary_text": f"{plan.currency} {Decimal(plan.total_cost_minor) / 100:.2f}",
                     "primary_cta": {
-                        "label": "Review plan",
+                        "label": "Select plan",
                         "selection": {"action": "review_plan", "target_id": plan.plan_id},
                     },
                 }
