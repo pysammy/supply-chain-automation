@@ -374,7 +374,10 @@ async def test_orchestrator_routes_all_specialists_and_completes_exact_ack() -> 
 
 
 @pytest.mark.asyncio
-async def test_conflict_counterproposal_routes_860_and_865_back_to_completion() -> None:
+@pytest.mark.parametrize("another_conflict", [False, True])
+async def test_conflict_counterproposal_routes_860_and_865_back_to_completion(
+    another_conflict: bool,
+) -> None:
     engine, store, _ = repository()
     workflow_id = uuid4()
     correlation_id = uuid4()
@@ -418,6 +421,19 @@ async def test_conflict_counterproposal_routes_860_and_865_back_to_completion() 
             allowed_actions=("accept", "counter", "cancel"),
         ),
     )
+    purchase_orders = [po.model_dump(mode="json")]
+    comparisons = {str(po.po_id): comparison.model_dump(mode="json")}
+    other_po = po.model_copy(update={"po_id": uuid4(), "po_number": "OTHER-PO"})
+    if another_conflict:
+        purchase_orders.append(other_po.model_dump(mode="json"))
+        comparisons[str(other_po.po_id)] = comparison.model_copy(
+            update={
+                "po_id": str(other_po.po_id),
+                "comparison": comparison.comparison.model_copy(
+                    update={"unfulfilled_quantity": Decimal("1")}
+                ),
+            }
+        ).model_dump(mode="json")
     with store.session_factory() as session, session.begin():
         session.add(
             WorkflowRun(
@@ -430,8 +446,8 @@ async def test_conflict_counterproposal_routes_860_and_865_back_to_completion() 
                     "currency": "USD",
                     "plans": [plan.model_dump(mode="json")],
                     "selected_plan_id": plan.plan_id,
-                    "purchase_orders": [po.model_dump(mode="json")],
-                    "comparisons": {str(po.po_id): comparison.model_dump(mode="json")},
+                    "purchase_orders": purchase_orders,
+                    "comparisons": comparisons,
                 },
             )
         )
@@ -522,7 +538,12 @@ async def test_conflict_counterproposal_routes_860_and_865_back_to_completion() 
         reply_to=str(forwarded_response.message_id),
         status="CHANGE_ACCEPTED",
         checkpoint_version=2,
-        summary={"accepted": True},
+        summary={
+            "accepted": True,
+            "total": "577.50",
+            "latest_arrival": "2026-11-20",
+            "quantities": {"ENGINE-001": "55"},
+        },
     )
     await handler(protocol, WorkflowStatusResponseTransport)(
         context,
@@ -531,7 +552,28 @@ async def test_conflict_counterproposal_routes_860_and_865_back_to_completion() 
     )
     completed = store.snapshot(workflow_id)
     assert completed is not None
+    if another_conflict:
+        assert completed.status == "WAITING_FOR_EXCEPTION_DECISION"
+        await coordinator.handle_selection(
+            context,
+            conversation_id="agent1manager",
+            selection=CardSelection(
+                action="accept", target_id=str(other_po.po_id), target_version=1
+            ),
+        )
+        completed = store.snapshot(workflow_id)
+        assert completed is not None
     assert completed.status == "COMPLETED"
+    completion = next(
+        json.loads(content.metadata["card_payload"])
+        for _, message in reversed(context.sent)
+        if isinstance(message, ChatMessage)
+        for content in message.content
+        if isinstance(content, MetadataContent)
+        and json.loads(content.metadata["card_payload"])["title"] == "Procurement complete"
+    )
+    assert completion["total_cost_minor"] == (113750 if another_conflict else 57750)
+    assert completion["target_feasible"] is (not another_conflict)
     engine.dispose()
 
 

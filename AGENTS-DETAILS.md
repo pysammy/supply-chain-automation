@@ -1,3 +1,7 @@
+Current runtime: five company agents plus one Supplier Agent. Only Orchestrator and Supplier
+publish Chat Protocol. The Sentry Reliability Agent described below is a future concept and is
+not part of the six-agent runtime.
+
 1. Manufacturing Orchestrator Agent
 Input:
 The manager’s request through ASI:One:
@@ -135,7 +139,15 @@ The Orchestrator then asks the human to:
 - Split or re-source the order.
 - Cancel the order.
 
-6. Sentry Reliability Agent
+6. Supplier Agent
+- Represents Alpha, Beta, and Gamma under one stable Agentverse identity.
+- Provides public quotation and capacity inquiries through ASI:One cards.
+- Accepts typed quotation/capacity calls from Sourcing and Procurement.
+- Accepts purchase/change submission and status calls only from Procurement.
+- Invokes the existing supplier REST endpoints and preserves supplier IDs, correlation IDs,
+  and idempotency keys. Human approval remains enforced by company-side agents.
+
+7. Sentry Reliability Agent (future concept)
 Input:
 - Sentry alerts and webhooks.
 - Errors, logs and traces.
@@ -192,6 +204,8 @@ Sourcing and Optimization Agent
 Human approves a plan
         ↓
 Procurement Execution Agent
+        ↓
+Supplier Agent
         ↓
 Supplier REST APIs
         ↓

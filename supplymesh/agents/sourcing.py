@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
@@ -91,7 +92,10 @@ class LiveFxResolver:
 
 
 def build_sourcing_protocol(
-    service: SourcingAgentService, fx_resolver: FxResolver
+    service: SourcingAgentService | Callable[[Context], SourcingAgentService],
+    fx_resolver: FxResolver,
+    *,
+    orchestrator_address: str | None = None,
 ) -> AgentProtocol:
     protocol = AgentProtocol(name="SupplyMeshSourcing", version="1.0.0")
 
@@ -104,14 +108,18 @@ def build_sourcing_protocol(
         },
     )
     async def handle_sourcing(ctx: Context, sender: str, msg: SourcingRequestTransport) -> None:
+        if orchestrator_address is not None and sender != orchestrator_address:
+            ctx.logger.warning("rejected unauthorized sourcing caller")
+            return
+        worker = service(ctx) if callable(service) else service
         try:
             request = msg.to_domain()
-            collected = await service.collect(request)
+            collected = await worker.collect(request)
             await ctx.send(sender, SupplierQuotesCollectedTransport.from_domain(collected))
             rates = await fx_resolver.resolve(
                 {quote.currency for quote in collected.quotes}, request.currency
             )
-            plans = service.plan(request, collected, fx_to_target=rates)
+            plans = worker.plan(request, collected, fx_to_target=rates)
             await ctx.send(sender, ProcurementPlansReadyTransport.from_domain(plans))
         except (ValidationError, ValueError, RuntimeError):
             await ctx.send(
@@ -120,7 +128,7 @@ def build_sourcing_protocol(
                     correlation_id=msg.correlation_id,
                     workflow_id=msg.workflow_id,
                     reply_to=msg.message_id,
-                    sender_agent=service.name,
+                    sender_agent=worker.name,
                     operation="SOURCING",
                     code="SOURCING_FAILED",
                     message="Supplier sourcing could not produce valid procurement plans.",

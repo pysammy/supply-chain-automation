@@ -2,6 +2,15 @@
 
 Treat this document as the source of truth for architecture, scope, implementation order, and acceptance criteria.
 
+**Approved architecture update (2026-10-17):** Keep the five company-side agents and add one
+Supplier Agent representing up to three supplier profiles. Register all six on Agentverse.
+Only Orchestrator and Supplier implement Agent Chat Protocol. Internal specialists accept work
+only from the Orchestrator; Sourcing and Procurement invoke the Supplier Agent's typed tools,
+and that agent calls the existing REST backend. Public Supplier chat supports quotation/capacity
+inquiries only. PO/change execution remains gated by company approvals. This update supersedes
+older references below to direct company-to-supplier REST calls or suppliers having no agent.
+Live registration/discovery remains a deployment acceptance step.
+
 ## 1. Project Summary
 
 SupplyMesh AI is an ASI:One-native, multi-agent procurement orchestration system for manufacturing companies.

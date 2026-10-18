@@ -41,10 +41,11 @@ def test_company_agents_publish_the_connectivity_slice_protocols() -> None:
             sourcing="test-sourcing-connectivity-seed",
             procurement="test-procurement-connectivity-seed",
             acknowledgment="test-acknowledgment-connectivity-seed",
+            supplier="test-supplier-connectivity-seed",
         ),
         publish_manifests=False,
     )
-    orchestrator, inventory, sourcing, procurement, acknowledgment = agents
+    orchestrator, inventory, sourcing, procurement, acknowledgment, supplier = agents
     assert orchestrator.get_message_protocol(Model.build_schema_digest(ChatMessage)) is not None
     assert (
         orchestrator.get_message_protocol(Model.build_schema_digest(InventoryShortageTransport))
@@ -84,3 +85,9 @@ def test_company_agents_publish_the_connectivity_slice_protocols() -> None:
         )
         is not None
     )
+
+    assert len({agent.address for agent in agents}) == 6
+    chat_digest = Model.build_schema_digest(ChatMessage)
+    assert supplier.get_message_protocol(chat_digest) is not None
+    for internal in (inventory, sourcing, procurement, acknowledgment):
+        assert internal.get_message_protocol(chat_digest) is None

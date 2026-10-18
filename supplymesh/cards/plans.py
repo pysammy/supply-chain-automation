@@ -50,7 +50,6 @@ def plan_approval_review(plan: ProcurementPlan, version: int) -> CardEnvelope:
                         "target_version": version,
                     },
                 },
-                {"label": "Modify", "value": {"action": "modify_plan", "target_id": plan.plan_id}},
                 {"label": "Reject", "value": {"action": "reject_plan", "target_id": plan.plan_id}},
             ],
         },

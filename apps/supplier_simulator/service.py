@@ -1,5 +1,5 @@
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 from hashlib import sha256
 from uuid import uuid4
 
@@ -119,7 +119,14 @@ class RfqService:
                 QuoteLine(
                     line_number=line.line_number,
                     component_sku=line.component_sku,
-                    offered_quantity=min(line.quantity, item.available_capacity),
+                    offered_quantity=min(
+                        (
+                            max(line.quantity, item.minimum_order_quantity)
+                            / item.packaging_multiple
+                        ).to_integral_value(rounding=ROUND_CEILING)
+                        * item.packaging_multiple,
+                        item.available_capacity,
+                    ),
                     unit_price=item.unit_price,
                     promised_date=(today or date.today()) + timedelta(days=item.lead_time_days),
                     lead_time_days=item.lead_time_days,

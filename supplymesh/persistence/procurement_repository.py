@@ -539,6 +539,13 @@ class ProcurementRepository:
             )
         return change_id
 
+    def get_counterproposal(self, po_id: str, version: int) -> Counterproposal:
+        with self.session_factory() as session:
+            record = session.get(ChangeOrderRecord, uuid5(UUID(po_id), f"change:{version}"))
+            if record is None:
+                raise ValueError("change response has no approved counterproposal")
+            return Counterproposal.model_validate(record.payload_json)
+
     def record_change_result(self, po_id: UUID, version: int, *, accepted: bool) -> None:
         change_id = uuid5(po_id, f"change:{version}")
         with self.session_factory() as session, session.begin():

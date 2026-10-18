@@ -3,7 +3,8 @@
 SupplyMesh AI is a deterministic, multi-agent procurement orchestrator for manufacturers. A
 manager describes a demand in ASI:One; five company-side agents protect existing inventory,
 calculate BOM shortages, collect supplier REST quotations, optimize sourcing, execute approved
-X12 purchase orders, and resolve supplier acknowledgment conflicts.
+X12 purchase orders, and resolve supplier acknowledgment conflicts. A sixth Supplier Agent
+represents Alpha, Beta, and Gamma and calls their backend REST endpoints as tools.
 
 This repository is an implementation in progress. The local deterministic workflow is tested,
 but the project is **not submission-complete**: Agentverse profiles, a deployed ASI:One
@@ -27,14 +28,17 @@ flowchart TD
   O --> A[Acknowledgment and Exception Agent]
   I --> DB[(PostgreSQL)]
   O --> DB
-  S --> R[Supplier Simulator REST API]
-  P --> R
-  R --> A
+  S --> V[Supplier Agent]
+  P --> V
+  V --> R[Supplier Simulator REST API]
+  V --> U
   S --> OPT[OR-Tools and FX provider]
 ```
 
-Suppliers are external REST endpoints simulated by one FastAPI service. They are deliberately
-**not agents**. There is no React or other custom frontend; ASI:One is the intended primary UI.
+One public Supplier Agent represents up to three supplier profiles backed by one FastAPI service.
+Sourcing and Procurement communicate with it through signed typed messages; only the Supplier
+Agent calls supplier REST endpoints. The backend itself remains a lightweight REST simulator.
+ASI:One is the intended primary UI; there is no custom frontend.
 
 ## Agents
 
@@ -42,18 +46,24 @@ Suppliers are external REST endpoints simulated by one FastAPI service. They are
 |---|---|
 | Manufacturing Orchestrator | ACP entry point, workflow transitions, approvals, status |
 | Inventory and BOM | Effective BOM, protected reservations, available-to-promise, shortage |
-| Sourcing and Optimization | Concurrent RFQs, validation, FX normalization, OR-Tools plans |
+| Sourcing and Optimization | RFQs through Supplier Agent, validation, FX normalization, OR-Tools plans |
 | Procurement Execution | Approval revalidation, X12 850/860, idempotent supplier calls, polling |
 | Acknowledgment and Exception | X12 855/865 parsing, materiality, impact, exception actions |
+| Supplier | Public quotation/capacity inquiries; internal supplier REST tools for Alpha/Beta/Gamma |
 
-Each identity requires its own environment-only seed. The host rejects missing or duplicate seeds.
+Only the Orchestrator and Supplier Agent publish Agent Chat Protocol. The other four agents
+accept workflow requests only from the Orchestrator. Supplier tool calls accept Sourcing or
+Procurement for RFQs/capacity and only Procurement for PO/change execution and status.
+
+Each of the six identities requires its own environment-only seed. The host rejects missing or duplicate seeds.
 
 ## Workflow
 
 1. Validate manufacturing demand.
 2. Expand the generic BOM and preserve existing/higher-priority reservations.
 3. Calculate shortages from on-hand, confirmed inbound, reservations, and safety stock.
-4. Request quotes concurrently from three configuration-driven supplier routes.
+4. Request quotes for three configuration-driven supplier profiles through the Supplier Agent.
+   Calls sharing a uAgents session are serialized to keep replies correctly correlated.
 5. Produce cheapest, fastest, balanced, risk-aware, and split plans with OR-Tools.
 6. Pause for plan approval, then pause separately before sending purchase orders.
 7. Persist the approved PO, raw X12 850, supplier-transaction intent, and outbound agent message
@@ -66,7 +76,8 @@ Each identity requires its own environment-only seed. The host rejects missing o
 9. Persist the acknowledgment in `READY_TO_DELIVER` before sending it to the Orchestrator and
    Acknowledgment Agent. A restart replays the same stable message IDs without resubmitting the PO.
 10. Commit tentative reservations for exact/accepted supply, or release them on cancellation. For
-    material differences, pause for accept, counter, switch, split, or cancel.
+    material differences, pause for accept, counter, or cancel. Supplier replacement requires
+    operator review in the demo.
 11. A human-approved counterproposal follows the same durable intent/journal/recovery sequence for
     X12 860 and persists the supplier's X12 865 response.
 
@@ -98,7 +109,7 @@ uv run python scripts/seed_demo.py
 uv run pytest
 ```
 
-Populate `DATABASE_URL`, the two supplier keys, and all five unique agent seeds before starting
+Populate `DATABASE_URL`, the two supplier keys, and all six unique agent seeds before starting
 the full services. Never reuse the example database password outside local development.
 
 ```bash
@@ -142,7 +153,7 @@ docker compose run --rm --no-deps agent-host \
 ```
 
 The harness is a deterministic CLI verification manager, not a custom frontend. It requires the
-five unique agent seeds and both local supplier keys in the ignored `.env` file; it generates its
+six unique agent seeds and both local supplier keys in the ignored `.env` file; it generates its
 own ephemeral manager identity without writing that seed to disk. `docker compose down -v` removes
 the local demo database volume, so use it only when intentionally resetting demo evidence.
 
@@ -157,7 +168,7 @@ scenario controls.
 
 - Runtime: `APP_ENV`, `LOG_LEVEL`, `DATABASE_URL`, and optional Compose host-port overrides
 - Fetch.ai: `ASI_ONE_API_KEY`, `ASI_ONE_MODEL`, `AGENTVERSE_API_KEY`
-- Identity: one `*_AGENT_SEED` for each of the five company agents
+- Identity: one `*_AGENT_SEED` for each of the six agents
 - Supplier boundary: `SUPPLIER_SIMULATOR_BASE_URL`, `SUPPLIER_API_KEY`,
   `SUPPLIER_ADMIN_API_KEY`
 - Reliability: HTTP retry/timeouts, quote threshold, acknowledgment polling policy
@@ -236,16 +247,28 @@ Human plan selection, PO approval, exception decisions, and counterproposal appr
 against the current persisted target/version. Outbound specialist messages and their typed payloads
 are recorded before delivery and updated afterward; pending messages are replayed with the same IDs
 after restart, and duplicate inbound message IDs are ignored. Exact 855 results
-complete the conversation, while conflicts expose accept, counter, switch/re-source,
-split/re-source, or cancel actions. The counter path routes the 860/865 exchange back through the
+complete the conversation, while conflicts expose accept, counter, or cancel actions.
+Switch/split replacement and plan modification are not offered in the demo. The counter path
+routes the 860/865 exchange back through the
 Acknowledgment Agent. Completion emits an Agent Activity card built from persisted message and
 transition evidence. Live Agentverse/ASI:One rendering remains a deployment verification item.
 
+For the current demo, use structured card submissions. Natural-language demand extraction and
+approval replies are not implemented. Leave counterproposal fields blank to request the original
+approved terms for a multi-line PO; custom per-line negotiation requires operator review.
+
+The Supplier Agent has its own public inquiry card. It supports structured `supplier_inquiry`
+submissions with `supplier_id`, `component_sku`, `operation` (`rfq` or `capacity`), and quotation
+`quantity`/`required_by`. Public chat cannot submit POs, changes, or retrieve private transactions.
+All six profiles use the existing Agentverse publication/mailbox configuration; live registration
+and ASI:One discovery must still be verified after deployment.
+
 Live deployment checklist:
 
-1. Set five unique seeds and Fetch.ai credentials in the deployment secret manager.
+1. Set six unique seeds (including `SUPPLIER_AGENT_SEED`) and Fetch.ai credentials in the deployment secret manager.
 2. Set `PUBLISH_AGENT_DETAILS=true` and deploy stable HTTPS services/PostgreSQL.
-3. Confirm all five Agentverse profiles and the Orchestrator's ACP 0.3.0 manifest.
+3. Confirm all six Agentverse profiles and ACP 0.3.0 manifests for the Orchestrator and Supplier Agent.
+   The four internal specialist profiles publish typed protocols without Chat Protocol.
 4. Test direct mention, discovery/planner routing, structured card replies, and natural-language
    replies in ASI:One.
 5. Complete one full conversation, publish its shared URL, and record the demo.

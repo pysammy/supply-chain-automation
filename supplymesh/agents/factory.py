@@ -1,7 +1,8 @@
 from dataclasses import dataclass
+from uuid import uuid4
 
 from sqlalchemy.orm import Session
-from uagents import Agent
+from uagents import Agent, Context
 
 from supplymesh.agents.acknowledgment import (
     AcknowledgmentAgentService,
@@ -12,9 +13,15 @@ from supplymesh.agents.orchestration import (
     OrchestrationCoordinator,
     build_specialist_response_protocol,
 )
-from supplymesh.agents.orchestrator import build_orchestrator_agent
+from supplymesh.agents.orchestrator import build_chat_protocol, build_planning_response_protocol
 from supplymesh.agents.procurement import ProcurementAgentService, build_procurement_protocol
 from supplymesh.agents.sourcing import LiveFxResolver, SourcingAgentService, build_sourcing_protocol
+from supplymesh.agents.supplier import (
+    SupplierAgentClient,
+    SupplierAgentService,
+    build_supplier_chat_protocol,
+    build_supplier_protocol,
+)
 from supplymesh.clients.supplier_client import SupplierClient
 from supplymesh.persistence.audit_repository import AuditRepository
 from supplymesh.persistence.database import get_engine
@@ -34,13 +41,14 @@ class AgentSeeds:
     sourcing: str
     procurement: str
     acknowledgment: str
+    supplier: str
 
     def validate(self) -> None:
         values = tuple(vars(self).values())
         if any(not value.strip() for value in values):
-            raise ValueError("all five agent seeds must be configured")
-        if len(set(values)) != 5:
-            raise ValueError("each company agent must have a unique seed")
+            raise ValueError("all six agent seeds must be configured")
+        if len(set(values)) != 6:
+            raise ValueError("each agent must have a unique seed")
 
 
 def _specialist(
@@ -67,11 +75,7 @@ def build_company_agents(
     publish_manifests: bool = True,
     supplier_base_url: str = "http://localhost:8001",
     supplier_api_key: str = "",
-    supplier_ids: tuple[str, ...] = (
-        "supplier-alpha",
-        "supplier-beta",
-        "supplier-gamma",
-    ),
+    supplier_ids: tuple[str, ...] = ("supplier-alpha", "supplier-beta", "supplier-gamma"),
     http_connect_timeout_seconds: float = 3,
     http_read_timeout_seconds: float = 10,
     http_max_retries: int = 3,
@@ -81,74 +85,144 @@ def build_company_agents(
     ack_poll_interval_seconds: float = 2,
     ack_poll_timeout_seconds: float = 45,
 ) -> tuple[Agent, ...]:
+    """Build five company agents and one public Supplier Agent in the same Bureau."""
     seeds.validate()
-    inventory = _specialist(
-        "supplymesh-inventory-bom",
-        seeds.inventory,
-        "Deterministically expands BOMs, protects reservations, and calculates shortages.",
-        publish_agent_details,
-        mailbox=mailbox,
+    descriptions = {
+        "orchestrator": (
+            "manufacturing-orchestrator",
+            (
+                "Manufacturing procurement: BOM, shortages, sourcing, human-"
+                "approved purchase orders and X12 acknowledgments. Start here for "
+                "procurement workflows."
+            ),
+        ),
+        "inventory": (
+            "inventory-bom",
+            (
+                "Internal specialist: BOM expansion, protected reservations and "
+                "shortages. Called only by the manufacturing Orchestrator."
+            ),
+        ),
+        "sourcing": (
+            "sourcing-optimization",
+            (
+                "Internal specialist: supplier quotations and constrained OR-Tools"
+                " procurement plans. Called only by the manufacturing "
+                "Orchestrator."
+            ),
+        ),
+        "procurement": (
+            "procurement-execution",
+            (
+                "Internal specialist: executes approved, version-matched, "
+                "idempotent purchase and change orders. Called only by the "
+                "manufacturing Orchestrator."
+            ),
+        ),
+        "acknowledgment": (
+            "acknowledgment-exception",
+            (
+                "Internal specialist: validates supplier acknowledgments and "
+                "exceptions. Called only by the manufacturing Orchestrator."
+            ),
+        ),
+        "supplier": (
+            "supplier",
+            (
+                "Supplier quotations and capacity for Alpha, Beta and Gamma. "
+                "Routes approved company-agent PO/change requests to supplier REST"
+                " tools. Public chat supports inquiries only."
+            ),
+        ),
+    }
+    agents = {
+        role: _specialist(
+            f"supplymesh-{name}",
+            getattr(seeds, role),
+            description,
+            publish_agent_details,
+            mailbox=mailbox,
+        )
+        for role, (name, description) in descriptions.items()
+    }
+    orchestrator, inventory, sourcing, procurement, acknowledgment, supplier = agents.values()
+    supplier_service = SupplierAgentService(
+        SupplierClient(
+            base_url=supplier_base_url,
+            api_key=supplier_api_key,
+            connect_timeout=http_connect_timeout_seconds,
+            read_timeout=http_read_timeout_seconds,
+            max_retries=http_max_retries,
+        ),
+        supplier_ids,
     )
-    inventory.include(build_inventory_protocol(), publish_manifest=publish_manifests)
-    supplier_client = SupplierClient(
-        base_url=supplier_base_url,
-        api_key=supplier_api_key,
-        connect_timeout=http_connect_timeout_seconds,
-        read_timeout=http_read_timeout_seconds,
-        max_retries=http_max_retries,
+    supplier.include(
+        build_supplier_protocol(
+            supplier_service,
+            sourcing_address=sourcing.address,
+            procurement_address=procurement.address,
+        ),
+        publish_manifest=publish_manifests,
     )
-    sourcing = _specialist(
-        "supplymesh-sourcing-optimization",
-        seeds.sourcing,
-        "Collects supplier REST quotes and creates constrained OR-Tools procurement plans.",
-        publish_agent_details,
-        mailbox=mailbox,
+    supplier.include(
+        build_supplier_chat_protocol(supplier_service), publish_manifest=publish_manifests
     )
+    inventory.include(
+        build_inventory_protocol(orchestrator_address=orchestrator.address),
+        publish_manifest=publish_manifests,
+    )
+    rpc_timeout = max(
+        60,
+        int(
+            (http_connect_timeout_seconds + http_read_timeout_seconds) * (http_max_retries + 1) + 10
+        ),
+    )
+
+    def sourcing_service(ctx: Context) -> SourcingAgentService:
+        return SourcingAgentService(
+            SupplierAgentClient(ctx, supplier.address, rpc_timeout),
+            supplier_ids,
+            minimum_valid_quotes=minimum_valid_quotes,
+        )
+
     sourcing.include(
         build_sourcing_protocol(
-            SourcingAgentService(
-                supplier_client,
-                supplier_ids,
-                minimum_valid_quotes=minimum_valid_quotes,
-            ),
+            sourcing_service,
             LiveFxResolver(
                 FrankfurterFxProvider(fx_provider_url, fx_cache_ttl_seconds),
                 SqlAlchemyFxRepository(_session_factory),
             ),
+            orchestrator_address=orchestrator.address,
         ),
         publish_manifest=publish_manifests,
     )
     procurement_repository = ProcurementRepository(_session_factory)
-    procurement = _specialist(
-        "supplymesh-procurement-execution",
-        seeds.procurement,
-        "Executes approved, version-matched, idempotent X12 purchase and change orders.",
-        publish_agent_details,
-        mailbox=mailbox,
-    )
+    journal = SqlAlchemySideEffectJournal(_session_factory)
+    recovery_owner = f"procurement-{uuid4()}"
+
+    def procurement_service(ctx: Context) -> ProcurementAgentService:
+        service = ProcurementAgentService(
+            SupplierAgentClient(ctx, supplier.address, rpc_timeout),
+            journal,
+            procurement_repository,
+            poll_interval_seconds=ack_poll_interval_seconds,
+            poll_timeout_seconds=ack_poll_timeout_seconds,
+        )
+        service.recovery_owner = recovery_owner
+        return service
+
     procurement.include(
         build_procurement_protocol(
-            ProcurementAgentService(
-                supplier_client,
-                SqlAlchemySideEffectJournal(_session_factory),
-                procurement_repository,
-                poll_interval_seconds=ack_poll_interval_seconds,
-                poll_timeout_seconds=ack_poll_timeout_seconds,
-            ),
+            procurement_service,
             recovery_interval_seconds=ack_poll_interval_seconds,
+            orchestrator_address=orchestrator.address,
         ),
         publish_manifest=publish_manifests,
     )
-    acknowledgment = _specialist(
-        "supplymesh-acknowledgment-exception",
-        seeds.acknowledgment,
-        "Parses X12 acknowledgments and deterministically classifies supplier discrepancies.",
-        publish_agent_details,
-        mailbox=mailbox,
-    )
     acknowledgment.include(
         build_acknowledgment_protocol(
-            AcknowledgmentAgentService(procurement_repository, procurement_repository)
+            AcknowledgmentAgentService(procurement_repository, procurement_repository),
+            orchestrator_address=orchestrator.address,
         ),
         publish_manifest=publish_manifests,
     )
@@ -165,22 +239,11 @@ def build_company_agents(
         audit=audit_repository,
         reservation_store=planning_repository,
     )
-    orchestrator = build_orchestrator_agent(
-        seed=seeds.orchestrator,
-        port=None,
-        mailbox=mailbox,
-        publish_agent_details=publish_agent_details,
-        coordinator=coordinator,
-        publish_manifests=publish_manifests,
+    orchestrator.include(build_chat_protocol(coordinator), publish_manifest=publish_manifests)
+    orchestrator.include(
+        build_planning_response_protocol(coordinator), publish_manifest=publish_manifests
     )
     orchestrator.include(
-        build_specialist_response_protocol(coordinator),
-        publish_manifest=publish_manifests,
+        build_specialist_response_protocol(coordinator), publish_manifest=publish_manifests
     )
-    return (
-        orchestrator,
-        inventory,
-        sourcing,
-        procurement,
-        acknowledgment,
-    )
+    return orchestrator, inventory, sourcing, procurement, acknowledgment, supplier

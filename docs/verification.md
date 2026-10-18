@@ -8,16 +8,16 @@ means the cited automated test or reproducible command passed; unchecked items a
 ## Executed locally
 
 - [x] Ruff formatting and linting: `uv run ruff format --check . && uv run ruff check .`
-- [x] Strict typing for 43 agent/domain/persistence/protocol/service source files:
+- [x] Strict typing for 45 agent/domain/persistence/protocol/service source files:
   `uv run --python 3.11 --isolated mypy`.
-- [x] Automated suite: 74 passed with `uv run pytest -q --cov=supplymesh --cov=apps`.
+- [x] Automated suite: 89 passed with `.venv/bin/python -m pytest -q`.
 - [x] Full `supplymesh` plus `apps` source coverage: 89% (`pytest-cov`).
 - [x] PostgreSQL migrations `0001`–`0007` upgrade, downgrade to base, and re-upgrade on a clean
   PostgreSQL 17 database.
 - [x] Alembic reports no SupplyMesh schema drift after LangGraph checkpoint setup.
 - [x] PostgreSQL checkpoint restart: pause, close graph/saver, reopen/resume twice, complete.
 - [x] PostgreSQL side-effect journal: pending and success survive independent sessions.
-- [x] Five unique stable uAgent addresses derive from five distinct runtime-only seeds.
+- [x] Six unique stable uAgent addresses derive from six distinct runtime-only seeds.
 - [x] Demand card submission traverses registered Orchestrator and Inventory uAgent protocol
   handlers, persists the demand/workflow before dispatch, and returns a correlated assessment card.
 - [ ] Docker Compose service startup. `docker compose config --quiet` passed, but the 2026-10-17
@@ -34,7 +34,8 @@ means the cited automated test or reproducible command passed; unchecked items a
 - [x] X12 850 generation, supplier submission, idempotency, and 855 polling are tested.
 - [x] Exact 855 reaches the matching/completion path.
 - [x] Conflicting 855 creates typed severity, cost, quantity, production, and schedule impact.
-- [x] Exception transitions support accept, counter, switch/re-source, split/re-source, and cancel.
+- [x] Runtime exception actions support accept, counter, and cancel. Switch/split replacement
+  requires operator review and is not offered on demo cards.
 - [x] Human-approved X12 860 and accepted 865 loop is tested end to end.
 - [x] Duplicate PO calls return the original supplier transaction.
 - [x] Workflow resumes from PostgreSQL after graph/checkpointer reconstruction.
@@ -52,7 +53,13 @@ means the cited automated test or reproducible command passed; unchecked items a
 ## Agentic and Fetch.ai
 
 - [x] Five distinct company-side uAgent identities and responsibilities exist.
-- [x] Suppliers are FastAPI REST routes and not agents.
+- [x] One Supplier Agent fronts three supplier REST profiles; only it calls supplier backend tools.
+- [x] Only Orchestrator and Supplier expose Chat Protocol; specialists enforce Orchestrator sender
+  addresses and Supplier tools enforce Sourcing/Procurement roles.
+- [x] Local uAgents dispatcher round trips exercise three supplier quotes, capacity, duplicate PO
+  submission, 850/855, and 860/865 through the Supplier Agent and real in-process FastAPI routes.
+- [x] Public Supplier chat allows quotation/capacity only; unauthorized tools and mismatched replies
+  are rejected.
 - [x] Agent Chat Protocol 0.3.0 manifest and card metadata build against installed official models.
 - [x] Typed versioned specialist request/result models and in-process service adapters are covered.
 - [x] Intake, plan, approval, exception, completion, and activity card payloads exist and validate.
@@ -71,8 +78,8 @@ means the cited automated test or reproducible command passed; unchecked items a
   with the original message ID after restart.
 - [x] Workflow completion builds and sends an Agent Activity card from bounded persisted message
   and state-transition evidence.
-- [ ] All five agents registered with stable Agentverse profile URLs.
-- [ ] Orchestrator discoverable and directly usable through ASI:One.
+- [ ] All six agents registered with stable Agentverse profile URLs.
+- [ ] Orchestrator and Supplier discoverable and directly usable through ASI:One.
 - [ ] Direct mention and planner-routed invocation verified live.
 - [ ] Interactive Card rendering and both reply formats verified live.
 - [ ] Complete primary workflow demonstrated in one ASI:One conversation.

@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Callable
+from typing import Any
 
 import httpx
 
@@ -31,6 +32,21 @@ class SupplierClient:
         self.max_retries = max_retries
         self.transport = transport
         self._sleep = sleep
+
+    async def get_capacity(
+        self, supplier_id: str, component_sku: str, *, correlation_id: str
+    ) -> dict[str, Any]:
+        async with httpx.AsyncClient(
+            base_url=self.base_url, timeout=self.timeout, transport=self.transport
+        ) as client:
+            response = await client.get(
+                f"/api/v1/suppliers/{supplier_id}/capacity",
+                params={"component_sku": component_sku},
+                headers={"X-API-Key": self.api_key, "X-Correlation-ID": correlation_id},
+            )
+            response.raise_for_status()
+            result: dict[str, Any] = response.json()
+            return result
 
     async def submit_rfq(
         self,

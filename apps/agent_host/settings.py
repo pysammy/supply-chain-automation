@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     sourcing_agent_seed: SecretStr | None = None
     procurement_agent_seed: SecretStr | None = None
     acknowledgment_agent_seed: SecretStr | None = None
+    supplier_agent_seed: SecretStr | None = None
     agent_host_port: int = Field(default=8000, ge=1, le=65535)
     agent_mailbox: bool = True
     publish_agent_details: bool = False

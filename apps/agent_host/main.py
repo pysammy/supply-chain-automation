@@ -20,9 +20,10 @@ def main() -> None:
         settings.sourcing_agent_seed,
         settings.procurement_agent_seed,
         settings.acknowledgment_agent_seed,
+        settings.supplier_agent_seed,
     )
     if any(value is None for value in configured):
-        raise RuntimeError("all five company agent seeds are required to start the Agentverse host")
+        raise RuntimeError("all six agent seeds are required to start the Agentverse host")
     values = [value.get_secret_value() for value in configured if value is not None]
     agents = build_company_agents(
         AgentSeeds(*values),

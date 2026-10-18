@@ -3,12 +3,12 @@
 ## Startup verification
 
 1. Load secrets from the deployment secret manager; never write agent seeds or API keys into the
-   repository or image.
+   repository or image. Include the new `SUPPLIER_AGENT_SEED`; all six seeds must be unique.
 2. Run `uv run alembic upgrade head` and `uv run python scripts/setup_checkpoints.py`.
-3. Start the supplier simulator, then the five-agent host.
+3. Start the supplier simulator, then the six-agent host.
 4. Require HTTP 200 from the supplier `/ready` endpoint and the diagnostic agent-host `/ready`
    endpoint before routing traffic.
-5. Run one synthetic happy-path demand and confirm that all five stable agent addresses match the
+5. Run one synthetic happy-path demand and confirm that all six stable agent addresses match the
    deployment inventory.
 
 ## Supplier transaction recovery

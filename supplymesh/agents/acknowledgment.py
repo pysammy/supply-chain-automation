@@ -13,7 +13,7 @@ from supplymesh.agents.transport import (
     WorkflowStatusResponseTransport,
 )
 from supplymesh.domain.exceptions import AcknowledgmentComparison
-from supplymesh.domain.procurement import PurchaseOrder
+from supplymesh.domain.procurement import Counterproposal, PurchaseOrder
 from supplymesh.edi.x12_855 import Parsed855, parse_855
 from supplymesh.edi.x12_865 import parse_865
 from supplymesh.protocols.common import WorkflowStatusResponse
@@ -24,6 +24,8 @@ from supplymesh.services.comparison_service import compare_acknowledgment
 
 class PurchaseOrderLookup(Protocol):
     def get_purchase_order(self, po_id: str) -> PurchaseOrder: ...
+
+    def get_counterproposal(self, po_id: str, version: int) -> Counterproposal: ...
 
 
 class AcknowledgmentEvidence(Protocol):
@@ -80,6 +82,26 @@ class AcknowledgmentAgentService:
             raise ValueError("change response does not match the expected PO and version")
         if message.po_version <= po.version:
             raise ValueError("change response is stale")
+        counter = self.purchase_orders.get_counterproposal(message.po_id, message.po_version)
+        expected = {line.line_number: line for line in counter.lines}
+        actual = {line.line_number: line for line in parsed.lines}
+        if (
+            parsed.currency != counter.currency
+            or len(actual) != len(parsed.lines)
+            or actual.keys() != expected.keys()
+        ):
+            raise ValueError("change response currency or line identities do not match approval")
+        for number, line in actual.items():
+            approved = expected[number]
+            if line.response_code == "IA" and (
+                line.component_sku != approved.component_sku
+                or line.unit != approved.unit
+                or line.quantity != approved.quantity
+                or line.unit_price <= 0
+                or line.unit_price > approved.maximum_unit_price
+                or line.promised_date > approved.requested_date
+            ):
+                raise ValueError("accepted change response differs from approved terms")
         rejected_lines = tuple(
             line.line_number for line in parsed.lines if line.response_code != "IA"
         )
@@ -103,11 +125,16 @@ class AcknowledgmentAgentService:
                 "po_version": parsed.po_version,
                 "accepted": accepted,
                 "rejected_lines": rejected_lines,
+                "total": str(sum(line.quantity * line.unit_price for line in parsed.lines)),
+                "latest_arrival": max(line.promised_date for line in parsed.lines).isoformat(),
+                "quantities": {line.component_sku: str(line.quantity) for line in parsed.lines},
             },
         )
 
 
-def build_acknowledgment_protocol(service: AcknowledgmentAgentService) -> AgentProtocol:
+def build_acknowledgment_protocol(
+    service: AcknowledgmentAgentService, *, orchestrator_address: str | None = None
+) -> AgentProtocol:
     protocol = AgentProtocol(name="SupplyMeshAcknowledgmentException", version="1.0.0")
 
     @protocol.on_message(
@@ -117,6 +144,9 @@ def build_acknowledgment_protocol(service: AcknowledgmentAgentService) -> AgentP
     async def handle_acknowledgment(
         ctx: Context, sender: str, msg: AcknowledgmentReceivedTransport
     ) -> None:
+        if orchestrator_address is not None and sender != orchestrator_address:
+            ctx.logger.warning("rejected unauthorized acknowledgment caller")
+            return
         try:
             result = service.compare(msg.to_domain())
             await ctx.send(sender, AcknowledgmentComparisonTransport.from_domain(result))
@@ -130,6 +160,9 @@ def build_acknowledgment_protocol(service: AcknowledgmentAgentService) -> AgentP
     async def handle_change_response(
         ctx: Context, sender: str, msg: ChangeResponseReceivedTransport
     ) -> None:
+        if orchestrator_address is not None and sender != orchestrator_address:
+            ctx.logger.warning("rejected unauthorized acknowledgment caller")
+            return
         try:
             result = service.evaluate_change(msg.to_domain())
             await ctx.send(sender, WorkflowStatusResponseTransport.from_domain(result))

@@ -118,6 +118,7 @@ def main() -> None:
             _required_secret(settings.sourcing_agent_seed, "SOURCING_AGENT_SEED"),
             _required_secret(settings.procurement_agent_seed, "PROCUREMENT_AGENT_SEED"),
             _required_secret(settings.acknowledgment_agent_seed, "ACKNOWLEDGMENT_AGENT_SEED"),
+            _required_secret(settings.supplier_agent_seed, "SUPPLIER_AGENT_SEED"),
         ),
         mailbox=False,
         publish_agent_details=False,

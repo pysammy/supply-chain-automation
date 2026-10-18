@@ -56,6 +56,10 @@ _EVENT_TRANSITIONS: dict[str, tuple[frozenset[str], str]] = {
         "WAITING_FOR_CHANGE_RESPONSE",
     ),
     "change_accepted": (frozenset({"WAITING_FOR_CHANGE_RESPONSE"}), "COMPLETED"),
+    "change_accepted_more_conflicts": (
+        frozenset({"WAITING_FOR_CHANGE_RESPONSE"}),
+        "WAITING_FOR_EXCEPTION_DECISION",
+    ),
     "change_rejected": (
         frozenset({"WAITING_FOR_CHANGE_RESPONSE"}),
         "WAITING_FOR_EXCEPTION_DECISION",

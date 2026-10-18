@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 from uuid import UUID, uuid4, uuid5
@@ -532,7 +533,10 @@ class ProcurementAgentService:
 
 
 def build_procurement_protocol(
-    service: ProcurementAgentService, *, recovery_interval_seconds: float = 2
+    service: ProcurementAgentService | Callable[[Context], ProcurementAgentService],
+    *,
+    recovery_interval_seconds: float = 2,
+    orchestrator_address: str | None = None,
 ) -> AgentProtocol:
     protocol = AgentProtocol(name="SupplyMeshProcurementExecution", version="1.0.0")
 
@@ -547,19 +551,23 @@ def build_procurement_protocol(
     async def handle_purchase_orders(
         ctx: Context, sender: str, msg: PurchaseOrderExecutionTransport
     ) -> None:
+        if orchestrator_address is not None and sender != orchestrator_address:
+            ctx.logger.warning("rejected unauthorized procurement caller")
+            return
+        worker = service(ctx) if callable(service) else service
         try:
             request = msg.to_domain()
-            for submitted, acknowledgment in await service.execute_purchase_orders(
+            for submitted, acknowledgment in await worker.execute_purchase_orders(
                 request, reply_address=sender
             ):
                 await ctx.send(sender, PurchaseOrderSubmittedTransport.from_domain(submitted))
                 await ctx.send(sender, AcknowledgmentReceivedTransport.from_domain(acknowledgment))
-                service.mark_delivery_complete(submitted)
+                worker.mark_delivery_complete(submitted)
         except (ValidationError, ValueError, RuntimeError):
-            await _send_failure(ctx, sender, msg, service.name, "PURCHASE_ORDER_EXECUTION")
+            await _send_failure(ctx, sender, msg, worker.name, "PURCHASE_ORDER_EXECUTION")
         except Exception:
             ctx.logger.exception("purchase-order transport execution failed")
-            await _send_failure(ctx, sender, msg, service.name, "PURCHASE_ORDER_EXECUTION")
+            await _send_failure(ctx, sender, msg, worker.name, "PURCHASE_ORDER_EXECUTION")
 
     @protocol.on_message(
         CounterproposalExecutionTransport,
@@ -572,19 +580,23 @@ def build_procurement_protocol(
     async def handle_counterproposal(
         ctx: Context, sender: str, msg: CounterproposalExecutionTransport
     ) -> None:
+        if orchestrator_address is not None and sender != orchestrator_address:
+            ctx.logger.warning("rejected unauthorized procurement caller")
+            return
+        worker = service(ctx) if callable(service) else service
         try:
             request = msg.to_domain()
-            submitted, response = await service.execute_counterproposal(
+            submitted, response = await worker.execute_counterproposal(
                 request, reply_address=sender
             )
             await ctx.send(sender, ChangeOrderSubmittedTransport.from_domain(submitted))
             await ctx.send(sender, ChangeResponseReceivedTransport.from_domain(response))
-            service.mark_delivery_complete(submitted)
+            worker.mark_delivery_complete(submitted)
         except (ValidationError, ValueError, RuntimeError):
-            await _send_failure(ctx, sender, msg, service.name, "COUNTERPROPOSAL_EXECUTION")
+            await _send_failure(ctx, sender, msg, worker.name, "COUNTERPROPOSAL_EXECUTION")
         except Exception:
             ctx.logger.exception("counterproposal transport execution failed")
-            await _send_failure(ctx, sender, msg, service.name, "COUNTERPROPOSAL_EXECUTION")
+            await _send_failure(ctx, sender, msg, worker.name, "COUNTERPROPOSAL_EXECUTION")
 
     @protocol.on_interval(
         recovery_interval_seconds,
@@ -596,8 +608,9 @@ def build_procurement_protocol(
         },
     )
     async def recover_incomplete_supplier_transactions(ctx: Context) -> None:
+        worker = service(ctx) if callable(service) else service
         try:
-            for delivery in await service.recover_pending():
+            for delivery in await worker.recover_pending():
                 if isinstance(delivery.submitted, PurchaseOrderSubmitted):
                     await ctx.send(
                         delivery.destination,
@@ -618,7 +631,7 @@ def build_procurement_protocol(
                         delivery.destination,
                         ChangeResponseReceivedTransport.from_domain(delivery.response),
                     )
-                service.mark_delivery_complete(delivery.submitted)
+                worker.mark_delivery_complete(delivery.submitted)
         except Exception:
             ctx.logger.exception("supplier transaction recovery failed")
 

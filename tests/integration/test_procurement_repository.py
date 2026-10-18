@@ -249,6 +249,7 @@ def test_procurement_evidence_is_immutable_idempotent_and_structured() -> None:
         ),
     )
     repository.record_change_order(counter, approval_id=uuid4())
+    assert repository.get_counterproposal(str(po.po_id), 2) == counter
     raw_860 = generate_860(
         po_number=counter.po_number,
         po_version=counter.change_version,

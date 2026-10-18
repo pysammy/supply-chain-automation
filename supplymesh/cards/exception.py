@@ -30,6 +30,7 @@ def exception_review(
                     },
                 }
                 for action in comparison.allowed_actions
+                if action not in {"switch", "split"}
             ],
         },
     )

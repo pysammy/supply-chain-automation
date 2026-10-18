@@ -516,6 +516,74 @@ class PurchaseOrders:
         assert po_id == str(self.po.po_id)
         return self.po
 
+    def get_counterproposal(self, po_id: str, version: int) -> Counterproposal:
+        assert po_id == str(self.po.po_id)
+        return Counterproposal(
+            workflow_id=self.po.workflow_id,
+            po_id=self.po.po_id,
+            po_number=self.po.po_number,
+            current_po_version=self.po.version,
+            change_version=version,
+            supplier_id=self.po.supplier_id,
+            currency=self.po.currency,
+            lines=tuple(
+                CounterproposalLine(
+                    line_number=line.line_number,
+                    component_sku=line.component_sku,
+                    quantity=line.quantity,
+                    unit=line.unit,
+                    maximum_unit_price=line.unit_price,
+                    requested_date=line.requested_date,
+                )
+                for line in self.po.lines
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"component_sku": "WRONG"},
+        {"quantity": Decimal("1")},
+        {"unit": "KG"},
+        {"unit_price": Decimal("999")},
+        {"promised_date": date(2027, 1, 1)},
+        {"line_number": 999},
+        {"currency": "EUR"},
+        {"duplicate": True},
+    ],
+)
+def test_accepted_865_cannot_change_approved_terms(changes: dict) -> None:
+    po = purchase_order()
+    changes = dict(changes)
+    currency = changes.pop("currency", po.currency)
+    duplicate = changes.pop("duplicate", False)
+    line = ChangeResponseLine(
+        line_number=1,
+        component_sku="ENGINE-001",
+        response_code="IA",
+        quantity=Decimal("75"),
+        unit="EA",
+        unit_price=Decimal("10"),
+        promised_date=date(2026, 12, 1),
+    ).model_copy(update=changes)
+    message = ChangeResponseReceived(
+        correlation_id=uuid4(),
+        workflow_id=po.workflow_id,
+        sender_agent="procurement-execution",
+        po_id=str(po.po_id),
+        po_version=2,
+        raw_x12=generate_865(
+            po_number=po.po_number,
+            po_version=2,
+            currency=currency,
+            lines=(line, line) if duplicate else (line,),
+            control_number="9",
+        ),
+    )
+    with pytest.raises(ValueError, match=r"approval|approved"):
+        AcknowledgmentAgentService(PurchaseOrders(po)).evaluate_change(message)
+
 
 @pytest.mark.asyncio
 async def test_acknowledgment_transport_compares_855_and_evaluates_865() -> None:

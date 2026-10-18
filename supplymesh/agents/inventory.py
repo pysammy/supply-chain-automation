@@ -28,7 +28,9 @@ class InventoryAgentService:
         )
 
 
-def build_inventory_protocol(service: InventoryAgentService | None = None) -> Protocol:
+def build_inventory_protocol(
+    service: InventoryAgentService | None = None, *, orchestrator_address: str | None = None
+) -> Protocol:
     handler = service or InventoryAgentService()
     protocol = Protocol(name="SupplyMeshInventoryPlanning", version="1.0.0")
 
@@ -39,6 +41,9 @@ def build_inventory_protocol(service: InventoryAgentService | None = None) -> Pr
     async def handle_planning_request(
         ctx: Context, sender: str, msg: DemandPlanningTransport
     ) -> None:
+        if orchestrator_address is not None and sender != orchestrator_address:
+            ctx.logger.warning("rejected unauthorized inventory caller")
+            return
         try:
             request = msg.to_domain()
             report = handler.handle(request)

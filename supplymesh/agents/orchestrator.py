@@ -134,7 +134,9 @@ def build_planning_response_protocol(coordinator: FetchConnectivityCoordinator) 
     async def handle_inventory_report(
         ctx: Context, sender: str, msg: InventoryShortageTransport
     ) -> None:
-        del sender
+        if sender != coordinator.inventory_address:
+            ctx.logger.warning("rejected unauthorized inventory response")
+            return
         try:
             await coordinator.complete_inventory(ctx, msg.to_domain())
         except (ValidationError, ValueError):
@@ -144,7 +146,9 @@ def build_planning_response_protocol(coordinator: FetchConnectivityCoordinator) 
     async def handle_inventory_failure(
         ctx: Context, sender: str, msg: PlanningFailureTransport
     ) -> None:
-        del sender
+        if sender != coordinator.inventory_address:
+            ctx.logger.warning("rejected unauthorized inventory failure")
+            return
         try:
             await coordinator.fail_inventory(ctx, msg)
         except ValueError:

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_CEILING, Decimal
 from hashlib import sha256
 from typing import Any, Literal, Protocol, cast
@@ -423,13 +423,25 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
         if result.reply_to != str(response.message_id):
             raise ValueError("change status does not answer the recorded supplier response")
         is_accepted = result.status == "CHANGE_ACCEPTED" and result.summary.get("accepted") is True
-        status = self._advance(snapshot, "change_accepted" if is_accepted else "change_rejected")
+        resolved = list(snapshot.state.get("resolved_po_ids", []))
+        commitments = dict(snapshot.state.get("change_commitments", {}))
+        if is_accepted:
+            resolved.append(response.po_id)
+            commitments[response.po_id] = result.summary
+        event = "change_accepted" if is_accepted else "change_rejected"
+        if is_accepted and self._remaining_conflicts(snapshot, resolved):
+            event = "change_accepted_more_conflicts"
+        status = self._advance(snapshot, event)
         if status == "COMPLETED":
             self._transition_reservations(result.workflow_id, "COMMITTED")
         accepted = self.routing_store.update(
             result.workflow_id,
             status=status,
-            updates={"change_status": result.model_dump(mode="json")},
+            updates={
+                "change_status": result.model_dump(mode="json"),
+                "resolved_po_ids": resolved,
+                "change_commitments": commitments,
+            },
             inbound_message_id=result.message_id,
         )
         if not accepted:
@@ -438,12 +450,7 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
         if status == "COMPLETED":
             await self._send_completion(ctx, current)
         else:
-            await self._send_chat(
-                ctx,
-                current.conversation_id,
-                "The supplier rejected part of the counterproposal. Another human decision is "
-                "required.",
-            )
+            await self._show_next_exception(ctx, current)
 
     async def handle_comparison(
         self, ctx: MessageContext, result: AcknowledgmentComparisonResult
@@ -488,14 +495,26 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
         if status == "COMPLETED":
             await self._send_completion(ctx, current)
             return
-        conflict = next(
+        await self._show_next_exception(ctx, current)
+
+    @staticmethod
+    def _remaining_conflicts(
+        snapshot: WorkflowSnapshot, resolved: list[str]
+    ) -> list[AcknowledgmentComparisonResult]:
+        return [
             AcknowledgmentComparisonResult.model_validate(value)
-            for value in comparisons.values()
-            if value["comparison"]["status"] != "MATCHED"
-        )
+            for po_id, value in snapshot.state.get("comparisons", {}).items()
+            if value["comparison"]["status"] != "MATCHED" and po_id not in resolved
+        ]
+
+    async def _show_next_exception(self, ctx: MessageContext, snapshot: WorkflowSnapshot) -> None:
+        conflicts = self._remaining_conflicts(snapshot, snapshot.state.get("resolved_po_ids", []))
+        if not conflicts:
+            return
+        conflict = conflicts[0]
         await self._send_chat(
             ctx,
-            current.conversation_id,
+            snapshot.conversation_id,
             "A supplier acknowledgment differs from the approved purchase order. "
             "Human review is required.",
             exception_review(
@@ -515,6 +534,11 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
             for key, value in snapshot.state.items()
             if key.endswith("request") and isinstance(value, dict)
         }
+        pending_ids.update(
+            str(value.get("message_id"))
+            for value in snapshot.state.get("acknowledgments", {}).values()
+        )
+        pending_ids.add(str(snapshot.state.get("change_response", {}).get("message_id")))
         if failure.reply_to not in pending_ids:
             raise ValueError("specialist failure does not answer a pending request")
         await self._fail(
@@ -673,6 +697,8 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
         comparison = AcknowledgmentComparisonResult.model_validate(comparisons[selection.target_id])
         if selection.target_version != comparison.po_version:
             raise ValueError("exception decision targets a stale purchase-order version")
+        if comparison.po_id in snapshot.state.get("resolved_po_ids", []):
+            raise ValueError("this purchase-order exception was already resolved")
         if selection.action == "counter":
             self.routing_store.update(
                 snapshot.workflow_id,
@@ -688,31 +714,46 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
             )
             return
         if selection.action in {"switch", "split"}:
-            status = self._advance(snapshot, "resourcing_requested")
-            self.routing_store.update(
-                snapshot.workflow_id,
-                status=status,
-                updates={"decision": selection.action},
+            raise ValueError(
+                "Supplier replacement requires operator review; no new order was sent."
             )
-            assessment = InventoryAssessment.model_validate(
-                snapshot.state["inventory_result"]["assessment"]
+        resolved = list(snapshot.state.get("resolved_po_ids", []))
+        if selection.action == "accept":
+            self.routing_store.save_approval(
+                workflow_id=snapshot.workflow_id,
+                decision_type="ACCEPT_EXCEPTION",
+                target_type="purchase_order",
+                target_id=comparison.po_id,
+                target_version=comparison.po_version,
+                actor=snapshot.conversation_id,
+                payload=comparison,
             )
-            await self._dispatch_sourcing(ctx, self._snapshot(snapshot.workflow_id), assessment)
-            return
+            resolved.append(comparison.po_id)
+            if self._remaining_conflicts(snapshot, resolved):
+                self.routing_store.update(
+                    snapshot.workflow_id, updates={"resolved_po_ids": resolved}
+                )
+                await self._show_next_exception(ctx, self._snapshot(snapshot.workflow_id))
+                return
         event = "exception_accepted" if selection.action == "accept" else "exception_cancelled"
         status = self._advance(snapshot, event)
         self._transition_reservations(
             snapshot.workflow_id,
             "COMMITTED" if status == "COMPLETED" else "RELEASED",
         )
-        self.routing_store.update(snapshot.workflow_id, status=status, updates={"decision": event})
+        self.routing_store.update(
+            snapshot.workflow_id,
+            status=status,
+            updates={"decision": event, "resolved_po_ids": resolved},
+        )
         if status == "COMPLETED":
             await self._send_completion(ctx, self._snapshot(snapshot.workflow_id))
         else:
             await self._send_chat(
                 ctx,
                 snapshot.conversation_id,
-                "The procurement workflow was cancelled. No further supplier action will be taken.",
+                "The local workflow was cancelled. Already submitted supplier orders remain active "
+                "and require operator cancellation.",
             )
 
     async def _review_counterproposal(
@@ -723,7 +764,15 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
         if selection.target_id not in {None, po_id}:
             raise ValueError("counterproposal targets a different purchase order")
         po = self._purchase_order(snapshot, po_id)
-        values = selection.values
+        values = {key: value for key, value in selection.values.items() if value not in (None, "")}
+        if len(po.lines) > 1 and any(
+            values.get(key) not in {None, ""}
+            for key in ("quantity", "maximum_price", "required_date")
+        ):
+            raise ValueError(
+                "For a multi-line purchase order, leave the fields blank to request the original "
+                "approved terms. Custom per-line negotiation requires operator review."
+            )
         quantity = Decimal(str(values.get("quantity", po.lines[0].quantity)))
         maximum_price = Decimal(str(values.get("maximum_price", po.lines[0].unit_price)))
         required_date = date.fromisoformat(
@@ -814,7 +863,12 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
         await self._send_chat(
             ctx,
             snapshot.conversation_id,
-            "The procurement workflow was cancelled. No supplier order was sent.",
+            (
+                "The local workflow was cancelled. Already submitted supplier orders remain active "
+                "and require operator cancellation."
+                if snapshot.state.get("po_submissions")
+                else "The procurement workflow was cancelled. No supplier order was sent."
+            ),
         )
 
     async def _send_completion(self, ctx: MessageContext, snapshot: WorkflowSnapshot) -> None:
@@ -827,19 +881,51 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
             PurchaseOrder.model_validate(value)
             for value in snapshot.state.get("purchase_orders", [])
         ]
-        card = completion_detail(
-            workflow_id=str(snapshot.workflow_id),
-            total_cost_minor=selected.total_cost_minor if selected else 0,
-            currency=selected.currency if selected else snapshot.state.get("currency", "USD"),
-            target_feasible=True,
-            commitments=[
+        assessment = snapshot.state.get("inventory_result", {}).get("assessment", {})
+        deadline = date.fromisoformat(assessment["required_by"]) if assessment else None
+        feasible = selected is None or selected.total_late_days == 0
+        total = Decimal("0")
+        commitments: list[dict[str, Any]] = []
+        for po in purchase_orders:
+            amount = po.total
+            arrival = max(line.requested_date for line in po.lines)
+            change = snapshot.state.get("change_commitments", {}).get(str(po.po_id))
+            if change is not None:
+                amount = Decimal(change["total"])
+                arrival = date.fromisoformat(change["latest_arrival"])
+                quantities = change["quantities"]
+                if any(
+                    Decimal(quantities.get(line.component_sku, str(line.quantity))) < line.quantity
+                    for line in po.lines
+                ):
+                    feasible = False
+            else:
+                comparison_data = snapshot.state.get("comparisons", {}).get(str(po.po_id))
+                if comparison_data is not None:
+                    comparison = AcknowledgmentComparisonResult.model_validate(
+                        comparison_data
+                    ).comparison
+                    amount += comparison.absolute_cost_delta
+                    arrival += timedelta(days=comparison.estimated_schedule_delay_days)
+                    if comparison.unfulfilled_quantity > 0:
+                        feasible = False
+            if deadline is not None and arrival > deadline:
+                feasible = False
+            total += amount
+            commitments.append(
                 {
                     "po_number": po.po_number,
                     "supplier_id": po.supplier_id,
-                    "total": str(po.total),
+                    "total": str(amount),
+                    "latest_arrival": arrival.isoformat(),
                 }
-                for po in purchase_orders
-            ],
+            )
+        card = completion_detail(
+            workflow_id=str(snapshot.workflow_id),
+            total_cost_minor=int((total * 100).to_integral_value()),
+            currency=selected.currency if selected else snapshot.state.get("currency", "USD"),
+            target_feasible=feasible,
+            commitments=commitments,
             audit_references=list(snapshot.state.get("comparisons", {}).keys()),
         )
         await self._send_chat(
@@ -1115,55 +1201,66 @@ def build_specialist_response_protocol(
 
     @protocol.on_message(SupplierQuotesCollectedTransport)
     async def quotes(ctx: Context, sender: str, msg: SupplierQuotesCollectedTransport) -> None:
-        del sender
-        await _bounded(ctx, coordinator.handle_quotes, msg)
+        await _bounded(ctx, coordinator.handle_quotes, msg, sender, coordinator.sourcing_address)
 
     @protocol.on_message(ProcurementPlansReadyTransport)
     async def plans(ctx: Context, sender: str, msg: ProcurementPlansReadyTransport) -> None:
-        del sender
-        await _bounded(ctx, coordinator.handle_plans, msg)
+        await _bounded(ctx, coordinator.handle_plans, msg, sender, coordinator.sourcing_address)
 
     @protocol.on_message(PurchaseOrderSubmittedTransport)
     async def submitted(ctx: Context, sender: str, msg: PurchaseOrderSubmittedTransport) -> None:
-        del sender
-        await _bounded(ctx, coordinator.handle_po_submitted, msg)
+        await _bounded(
+            ctx, coordinator.handle_po_submitted, msg, sender, coordinator.procurement_address
+        )
 
     @protocol.on_message(AcknowledgmentReceivedTransport)
     async def acknowledgment(
         ctx: Context, sender: str, msg: AcknowledgmentReceivedTransport
     ) -> None:
-        del sender
-        await _bounded(ctx, coordinator.handle_acknowledgment, msg)
+        await _bounded(
+            ctx, coordinator.handle_acknowledgment, msg, sender, coordinator.procurement_address
+        )
 
     @protocol.on_message(AcknowledgmentComparisonTransport)
     async def comparison(ctx: Context, sender: str, msg: AcknowledgmentComparisonTransport) -> None:
-        del sender
-        await _bounded(ctx, coordinator.handle_comparison, msg)
+        await _bounded(
+            ctx, coordinator.handle_comparison, msg, sender, coordinator.acknowledgment_address
+        )
 
     @protocol.on_message(ChangeOrderSubmittedTransport)
     async def change_submitted(
         ctx: Context, sender: str, msg: ChangeOrderSubmittedTransport
     ) -> None:
-        del sender
-        await _bounded(ctx, coordinator.handle_change_submitted, msg)
+        await _bounded(
+            ctx, coordinator.handle_change_submitted, msg, sender, coordinator.procurement_address
+        )
 
     @protocol.on_message(ChangeResponseReceivedTransport)
     async def change_response(
         ctx: Context, sender: str, msg: ChangeResponseReceivedTransport
     ) -> None:
-        del sender
-        await _bounded(ctx, coordinator.handle_change_response, msg)
+        await _bounded(
+            ctx, coordinator.handle_change_response, msg, sender, coordinator.procurement_address
+        )
 
     @protocol.on_message(WorkflowStatusResponseTransport)
     async def workflow_status(
         ctx: Context, sender: str, msg: WorkflowStatusResponseTransport
     ) -> None:
-        del sender
-        await _bounded(ctx, coordinator.handle_change_status, msg)
+        await _bounded(
+            ctx, coordinator.handle_change_status, msg, sender, coordinator.acknowledgment_address
+        )
 
     @protocol.on_message(SpecialistFailureTransport)
     async def failure(ctx: Context, sender: str, msg: SpecialistFailureTransport) -> None:
-        del sender
+        expected = {
+            "sourcing-and-optimization": coordinator.sourcing_address,
+            "procurement-execution": coordinator.procurement_address,
+            "acknowledgment-and-exception": coordinator.acknowledgment_address,
+        }.get(msg.sender_agent)
+        if sender != expected:
+            ctx.logger.warning("rejected unauthorized specialist failure")
+            return
         try:
             await coordinator.handle_failure(ctx, msg)
         except (ValidationError, ValueError):
@@ -1189,7 +1286,12 @@ def build_specialist_response_protocol(
     return protocol
 
 
-async def _bounded(ctx: Context, handler: Any, msg: Any) -> None:
+async def _bounded(
+    ctx: Context, handler: Any, msg: Any, sender: str, expected_address: str
+) -> None:
+    if sender != expected_address:
+        ctx.logger.warning("rejected unauthorized specialist response")
+        return
     try:
         await handler(ctx, msg.to_domain())
     except (ValidationError, ValueError):
