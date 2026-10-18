@@ -4,10 +4,89 @@ from decimal import Decimal
 from uuid import uuid4
 
 from supplymesh.cards.completion import agent_activity_detail, completion_detail
+from supplymesh.cards.exception import exception_review
 from supplymesh.cards.inventory import inventory_assessment_detail
 from supplymesh.cards.procurement import counterproposal_form, purchase_order_detail
+from supplymesh.domain.exceptions import AcknowledgmentComparison, Discrepancy, Severity
 from supplymesh.domain.models import InventoryAssessment, ShortageLine
 from supplymesh.domain.procurement import PurchaseOrder, PurchaseOrderLine
+
+
+def test_exception_card_identifies_supplier_and_matches_components_by_po_line_number() -> None:
+    po = PurchaseOrder(
+        po_id=uuid4(),
+        po_number="PO-DELAY-1",
+        workflow_id=uuid4(),
+        supplier_id="supplier-gamma",
+        version=2,
+        currency="EUR",
+        lines=tuple(
+            PurchaseOrderLine(
+                line_number=index,
+                component_sku=sku,
+                quantity=Decimal("10"),
+                unit_price=Decimal("1"),
+                requested_date=date(2026, 11, 3),
+            )
+            for index, sku in enumerate(("ENGINE-001", "FRAME-001", "ECU-001"), start=1)
+        ),
+        total=Decimal("30"),
+    )
+    comparison = AcknowledgmentComparison(
+        status="EXCEPTION",
+        discrepancies=tuple(
+            Discrepancy(
+                category="DELIVERY_DELAYED",
+                severity=Severity.HIGH,
+                po_line_number=line,
+                expected_value="2026-11-03",
+                actual_value=actual,
+            )
+            for line, actual in ((3, "2026-11-24"), (1, "2026-11-10"), (2, "2026-11-17"))
+        ),
+        absolute_cost_delta=Decimal("0E-10"),
+        percentage_cost_delta=Decimal("0"),
+        unfulfilled_quantity=Decimal("0"),
+        production_units_affected=Decimal("0"),
+        estimated_schedule_delay_days=21,
+        recommended_action="switch",
+        allowed_actions=("accept", "counter", "switch", "cancel"),
+    )
+    nodes = json.loads(exception_review(comparison, po=po).card_payload)["root"]["children"]
+    texts = [node["value"] for node in nodes if node["type"] == "text"]
+    assert "supplier-gamma" in texts[0] and "PO-DELAY-1" in texts[0]
+    assert "Cost change: EUR 0.00" in texts[2]
+    assert "ECU-001 (PO line 3)" in texts[3] and "2026-11-24" in texts[3]
+    assert "ENGINE-001 (PO line 1)" in texts[4] and "2026-11-10" in texts[4]
+    assert "FRAME-001 (PO line 2)" in texts[5] and "2026-11-17" in texts[5]
+    for node in nodes:
+        if node["type"] == "button":
+            assert node["action"]["selection"]["target_id"] == str(po.po_id)
+            assert node["action"]["selection"]["target_version"] == 2
+
+
+def test_activity_card_compacts_repeated_events_and_long_approver_addresses() -> None:
+    activities = [
+        {
+            "agent": "manufacturing-orchestrator",
+            "action": "WORKFLOW_UPDATED",
+            "outcome": "COMPLETED" if index == 49 else "SOURCING",
+        }
+        for index in range(50)
+    ]
+    activities.append(
+        {"agent": "agent1" + "x" * 60, "action": "SEND_COUNTERPROPOSAL", "outcome": "RECORDED"}
+    )
+    card = agent_activity_detail(activities)
+    rows = json.loads(card.card_payload)["summary_rows"]
+    assert len(rows) == 2
+    assert rows[0] == {
+        "label": "Orchestrator",
+        "value": "50 recent event(s); latest WORKFLOW_UPDATED: COMPLETED",
+    }
+    assert rows[1]["label"] == "Human approvals"
+    assert "agent1" not in card.card_payload
+    assert len(activities) == 51
 
 
 def test_required_detail_and_form_cards_are_versioned_and_structured() -> None:

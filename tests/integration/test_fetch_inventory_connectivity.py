@@ -26,6 +26,7 @@ from supplymesh.agents.transport import (
     InventoryShortageTransport,
     PlanningFailureTransport,
 )
+from supplymesh.cards.completion import agent_activity_detail
 from supplymesh.cards.demand import DemandIntake
 from supplymesh.domain.enums import Priority
 from supplymesh.domain.models import BomComponent, Demand, InventoryPosition
@@ -133,6 +134,25 @@ def handler(protocol: Protocol, model: type[Model]) -> Any:
 
 
 @pytest.mark.asyncio
+async def test_informational_card_done_does_not_start_a_workflow() -> None:
+    card = agent_activity_detail([{"agent": "orchestrator", "outcome": "completed"}])
+    selection = json.loads(card.card_payload)["ctas"][0]["selection"]
+    store = FakeWorkflowStore()
+    coordinator = FetchConnectivityCoordinator(
+        inventory_address="agent1inventory", requests=FakeRequestFactory(), workflows=store
+    )
+    ctx = FakeContext()
+    message = ChatMessage(
+        timestamp=datetime.now(UTC),
+        content=[TextContent(text=json.dumps({**selection, "approved": True}))],
+    )
+    await handler(build_chat_protocol(coordinator), ChatMessage)(ctx, "agent1manager", message)
+    assert len(ctx.sent) == 1
+    assert isinstance(ctx.sent[0][1], ChatAcknowledgement)
+    assert not store.sessions
+
+
+@pytest.mark.asyncio
 async def test_card_submission_reaches_inventory_agent_and_returns_assessment_card() -> None:
     store = FakeWorkflowStore()
     coordinator = FetchConnectivityCoordinator(
@@ -153,12 +173,18 @@ async def test_card_submission_reaches_inventory_agent_and_returns_assessment_ca
             "required_by": "2026-12-01",
             "priority": "rush",
             "currency": "USD",
+            "approved": True,
         }
     )
     incoming = ChatMessage(
         timestamp=datetime(2026, 10, 16, tzinfo=UTC),
         msg_id=uuid4(),
-        content=[TextContent(text=card_reply)],
+        content=[
+            TextContent(
+                text="@agent1qtfzla78vr2uznva9twcsz5xseyzs4z9paxk3zu8p49mdh5h72g92u5r6wk "
+                + card_reply
+            )
+        ],
     )
     await handler(chat_protocol, ChatMessage)(user_context, "agent1manager", incoming)
 
@@ -191,7 +217,7 @@ async def test_card_submission_reaches_inventory_agent_and_returns_assessment_ca
     payload = json.loads(metadata["card_payload"])
     rows = {row["label"]: row["value"] for row in payload["summary_rows"]}
     assert rows["Shortages"] == "Yes"
-    assert "ATP 20" in rows["ENGINE-001"]
+    assert "available 20" in rows["ENGINE-001"]
     assert "shortage 55" in rows["ENGINE-001"]
     assert store.results[request.workflow_id]["has_shortages"] is True
 

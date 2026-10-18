@@ -10,7 +10,17 @@ means the cited automated test or reproducible command passed; unchecked items a
 - [x] Ruff formatting and linting: `uv run ruff format --check . && uv run ruff check .`
 - [x] Strict typing for 45 agent/domain/persistence/protocol/service source files:
   `uv run --python 3.11 --isolated mypy`.
-- [x] Automated suite: 94 passed with `.venv/bin/python -m pytest -q`.
+- [x] Automated suite: 117 passed with `.venv/bin/python -m pytest -q`.
+- [x] Exception cards identify the supplier and PO, and map each discrepancy's PO line number to
+  its component SKU. Pending exception cards can be redisplayed without changing workflow state.
+- [x] Inventory assessment rounds aggregated EA requirements up and available whole-part counts
+  down before reserving stock. Fractional material units retain their precision; card quantities
+  omit trailing decimal zeros.
+- [x] Inventory assessment remains visible until the user continues. Sourcing dispatch is gated
+  by conversation, workflow ID, review version, and duplicate-click checks. Sufficient inventory
+  presents View completion without immediately replacing the assessment.
+- [x] Supplier REST quotations cover every component in the demo motorcycle BOM; a regression
+  sources 20 of each component and verifies all five plans cover every shortage.
 - [x] Full `supplymesh` plus `apps` source coverage: 89% (`pytest-cov`).
 - [x] PostgreSQL migrations `0001`–`0007` upgrade, downgrade to base, and re-upgrade on a clean
   PostgreSQL 17 database.
@@ -80,8 +90,8 @@ means the cited automated test or reproducible command passed; unchecked items a
   tests with end-to-end correlation/reply validation and duplicate inbound suppression.
 - [x] Pending Orchestrator-to-specialist messages retain their validated typed payload and replay
   with the original message ID after restart.
-- [x] Workflow completion builds and sends an Agent Activity card from bounded persisted message
-  and state-transition evidence.
+- [x] Workflow completion sends one card combining totals, commitments, and a compact activity
+  summary from persisted message and state-transition evidence. Full audit rows remain stored.
 - [ ] All six agents registered with stable Agentverse profile URLs.
 - [ ] Orchestrator and Supplier discoverable and directly usable through ASI:One.
 - [ ] Direct mention and planner-routed invocation verified live.

@@ -41,6 +41,8 @@ def build_chat_protocol(coordinator: FetchConnectivityCoordinator | None = None)
             if (selection := parse_card_selection(text)) is not None
         )
         selection = selections[-1] if selections else None
+        if selection is not None and selection.action == "dismiss_card":
+            return  # Informational cards have no workflow side effects.
         if (
             coordinator is not None
             and selection is not None

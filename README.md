@@ -62,7 +62,9 @@ Each of the six identities requires its own environment-only seed. The host reje
 1. Validate manufacturing demand.
 2. Expand the generic BOM and preserve existing/higher-priority reservations.
 3. Calculate shortages from on-hand, confirmed inbound, reservations, and safety stock.
-4. Request quotes for three configuration-driven supplier profiles through the Supplier Agent.
+4. Pause on the inventory assessment so the user can review each component's required, available,
+   and shortage quantities. Continue to sourcing requests quotes for three configuration-driven
+   supplier profiles through the Supplier Agent.
    Calls sharing a uAgents session are serialized to keep replies correctly correlated.
 5. Produce cheapest, fastest, balanced, risk-aware, and split plans with OR-Tools.
 6. Pause for plan approval, then pause separately before sending purchase orders.
@@ -250,8 +252,8 @@ after restart, and duplicate inbound message IDs are ignored. Exact 855 results
 complete the conversation, while conflicts expose accept, counter, or cancel actions.
 Switch/split replacement and plan modification are not offered in the demo. The counter path
 routes the 860/865 exchange back through the
-Acknowledgment Agent. Completion emits an Agent Activity card built from persisted message and
-transition evidence. Live Agentverse/ASI:One rendering remains a deployment verification item.
+Acknowledgment Agent. Completion includes a compact activity summary built from persisted message
+and transition evidence. Live Agentverse/ASI:One rendering remains a deployment verification item.
 
 For the current demo, use structured card submissions. Natural-language demand extraction and
 approval replies are not implemented. Leave counterproposal fields blank to request the original

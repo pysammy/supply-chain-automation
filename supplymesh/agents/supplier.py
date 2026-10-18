@@ -273,10 +273,6 @@ def build_supplier_chat_protocol(service: SupplierAgentService) -> Protocol:
         "form",
         {
             "title": "Supplier quotations and capacity",
-            "subtitle": (
-                "Choose a supplier and request capacity or a quotation. Orders "
-                "require the manufacturing Orchestrator's approval workflow."
-            ),
             "fields": [
                 {
                     "name": "operation",

@@ -53,7 +53,6 @@
           "action": "submit_demand"
         }
       },
-      "subtitle": "Confirm the demand before inventory planning begins.",
       "title": "Manufacturing demand"
     }
   },
@@ -136,7 +135,15 @@
           "value": "None"
         }
       ],
-      "title": "Procurement complete"
+      "title": "Procurement complete",
+      "ctas": [
+        {
+          "label": "Done",
+          "selection": {
+            "action": "dismiss_card"
+          }
+        }
+      ]
     }
   },
   {
@@ -146,11 +153,15 @@
         "children": [
           {
             "type": "text",
+            "value": "Supplier: supplier-alpha. Purchase order: SAMPLE-PO, version 2."
+          },
+          {
+            "type": "text",
             "value": "Status: EXCEPTION. Recommended action: counter."
           },
           {
             "type": "text",
-            "value": "Cost change: 100 (1%). Unfulfilled quantity: 0. Production units affected: 0. Schedule delay: 1 days."
+            "value": "Cost change: USD 100.00 (1.00%). Unfulfilled quantity: 0. Production units affected: 0. Schedule delay: 1 days."
           },
           {
             "action": {

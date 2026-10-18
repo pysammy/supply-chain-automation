@@ -27,7 +27,7 @@ from supplymesh.agents.transport import (
     SupplierQuotesCollectedTransport,
     WorkflowStatusResponseTransport,
 )
-from supplymesh.cards.completion import agent_activity_detail, completion_detail
+from supplymesh.cards.completion import completion_detail
 from supplymesh.cards.exception import exception_review
 from supplymesh.cards.inventory import inventory_assessment_detail
 from supplymesh.cards.plans import plan_approval_review, procurement_plan_carousel
@@ -180,27 +180,29 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
                     "assessment": assessment.model_dump(mode="json"),
                     "has_shortages": assessment.has_shortages,
                     "report_message_id": str(report.message_id),
-                }
+                },
+                "inventory_review_version": 1,
             },
             inbound_message_id=report.message_id,
         )
         if not accepted:
             return
-        card = inventory_assessment_detail(assessment)
+        card = inventory_assessment_detail(
+            assessment,
+            workflow_id=str(report.workflow_id),
+            workflow_version=1,
+        )
         shortage_count = sum(1 for line in assessment.lines if line.shortage > 0)
         await self._send_chat(
             ctx,
             session.conversation_id,
             (
                 "Inventory planning is complete. Existing reservations and safety stock remain "
-                f"protected; {shortage_count} component line(s) require sourcing."
+                f"protected; {shortage_count} component line(s) require sourcing. "
+                "Review the required, available, and shortage quantities before continuing."
             ),
             card.metadata(),
         )
-        if assessment.has_shortages:
-            await self._dispatch_sourcing(ctx, snapshot, assessment)
-        else:
-            await self._send_completion(ctx, self._snapshot(report.workflow_id))
 
     async def handle_quotes(self, ctx: MessageContext, collected: SupplierQuotesCollected) -> None:
         self._audit_received(collected)
@@ -255,9 +257,33 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
     async def handle_selection(
         self, ctx: MessageContext, *, conversation_id: str, selection: CardSelection
     ) -> bool:
+        if selection.action in {"show_completion", "continue_to_sourcing"}:
+            if selection.target_id is None:
+                raise ValueError("a workflow ID is required")
+            completed = self._snapshot(UUID(selection.target_id))
+            if completed.conversation_id != conversation_id:
+                raise ValueError("workflow does not belong to this conversation")
+            if selection.action == "show_completion":
+                self._require_status(completed, "COMPLETED")
+                await self._send_completion(ctx, completed)
+            else:
+                self._require_status(completed, "SOURCING")
+                if selection.target_version != completed.state.get("inventory_review_version"):
+                    raise ValueError("inventory review is stale")
+                if completed.state.get("sourcing_request"):
+                    raise ValueError("sourcing has already started")
+                assessment = InventoryAssessment.model_validate(
+                    completed.state["inventory_result"]["assessment"]
+                )
+                await self._dispatch_sourcing(ctx, completed, assessment)
+            return True
         snapshot = self.routing_store.find_active_by_conversation(conversation_id)
         if snapshot is None:
             return False
+        if selection.action == "show_exception":
+            self._require_status(snapshot, "WAITING_FOR_EXCEPTION_DECISION")
+            await self._show_next_exception(ctx, snapshot)
+            return True
         if selection.action == "review_plan":
             await self._review_plan(ctx, snapshot, selection)
             return True
@@ -519,8 +545,7 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
             "Human review is required.",
             exception_review(
                 conflict.comparison,
-                po_id=conflict.po_id,
-                po_version=conflict.po_version,
+                po=self._purchase_order(snapshot, conflict.po_id),
             ).metadata(),
         )
 
@@ -707,7 +732,9 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
             await self._send_chat(
                 ctx,
                 snapshot.conversation_id,
-                "Enter the acceptable quantity, maximum unit price, and required date.",
+                "Enter the acceptable quantity, maximum unit price, and required date. "
+                "Leave fields blank to request original terms. "
+                "Multi-line orders require blank fields.",
                 counterproposal_form(
                     po_id=comparison.po_id, po_version=comparison.po_version
                 ).metadata(),
@@ -920,28 +947,24 @@ class OrchestrationCoordinator(FetchConnectivityCoordinator):
                     "latest_arrival": arrival.isoformat(),
                 }
             )
+        currency = selected.currency if selected else snapshot.state.get("currency", "USD")
         card = completion_detail(
             workflow_id=str(snapshot.workflow_id),
             total_cost_minor=int((total * 100).to_integral_value()),
-            currency=selected.currency if selected else snapshot.state.get("currency", "USD"),
+            currency=currency,
             target_feasible=feasible,
             commitments=commitments,
             audit_references=list(snapshot.state.get("comparisons", {}).keys()),
+            activities=self.audit.list_activity(snapshot.workflow_id) if self.audit else [],
         )
         await self._send_chat(
             ctx,
             snapshot.conversation_id,
-            "Procurement is complete and the supplier commitments are confirmed.",
+            f"Procurement is complete and the supplier commitments are confirmed. "
+            f"Total: {currency} {total:.2f}. "
+            f"Manufacturing target feasible: {'Yes' if feasible else 'No'}.",
             card.metadata(),
         )
-        if self.audit is not None:
-            activities = self.audit.list_activity(snapshot.workflow_id)
-            await self._send_chat(
-                ctx,
-                snapshot.conversation_id,
-                "Agent activity and durable workflow evidence are available for review.",
-                agent_activity_detail(activities).metadata(),
-            )
 
     def _transition_reservations(
         self, workflow_id: UUID, status: Literal["COMMITTED", "RELEASED"]

@@ -289,6 +289,8 @@ async def test_supplier_chat_inquiries_call_backend_but_cannot_order():
     ]
     assert "cannot submit purchase orders" in ctx.sent[-1].content[0].text
     assert any(isinstance(item, MetadataContent) for item in ctx.sent[-1].content)
+    metadata = next(item for item in ctx.sent[-1].content if isinstance(item, MetadataContent))
+    assert set(json.loads(metadata.metadata["card_payload"])) == {"title", "fields", "submit_cta"}
 
 
 @pytest.mark.asyncio

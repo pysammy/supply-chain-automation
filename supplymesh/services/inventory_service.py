@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 
 from supplymesh.domain.models import (
     BomComponent,
@@ -41,8 +41,11 @@ def assess_inventory(
             InventoryPosition(component_sku=sku, on_hand=Decimal("0"), unit=component.unit),
         )
         atp = available_to_promise(position)
-        usable = max(atp, Decimal("0"))
         gross = requirements[sku]
+        if component.unit.upper() == "EA":
+            gross = gross.to_integral_value(rounding=ROUND_CEILING)
+            atp = atp.to_integral_value(rounding=ROUND_FLOOR)
+        usable = max(atp, Decimal("0"))
         reserved = min(gross, usable)
         shortage = max(Decimal("0"), gross - usable)
         lines.append(

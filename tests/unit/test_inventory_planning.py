@@ -1,8 +1,12 @@
+import json
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import uuid4
 
+import pytest
+
 from supplymesh.agents.inventory import InventoryAgentService
+from supplymesh.cards.inventory import inventory_assessment_detail
 from supplymesh.domain.enums import Priority
 from supplymesh.domain.models import BomComponent, Demand, InventoryPosition
 from supplymesh.protocols.planning import DemandPlanningRequest
@@ -28,6 +32,46 @@ def rush_demand() -> Demand:
 
 def test_scrap_factor_uses_decimal_math() -> None:
     assert gross_requirement(Decimal("75"), component(scrap="0.02")) == Decimal("76.50")
+
+
+@pytest.mark.parametrize(
+    ("unit", "on_hand", "required", "available", "shortage", "display"),
+    [
+        ("EA", "0.000000", "51", "0", "51", "Required 51; available 0; shortage 51 EA."),
+        ("EA", "20.750000", "51", "20", "31", "Required 51; available 20; shortage 31 EA."),
+        (
+            "KG",
+            "20.750000",
+            "50.5",
+            "20.75",
+            "29.75",
+            "Required 50.5; available 20.75; shortage 29.75 KG.",
+        ),
+    ],
+)
+def test_scrap_allowance_uses_whole_parts_for_ea_and_fractional_materials_for_kg(
+    unit: str, on_hand: str, required: str, available: str, shortage: str, display: str
+) -> None:
+    demand = rush_demand().model_copy(update={"quantity": Decimal("50")})
+    assessment = assess_inventory(
+        demand,
+        (
+            BomComponent(
+                component_sku="FRAME-001",
+                quantity_per=Decimal("1"),
+                scrap_factor=Decimal("0.01"),
+                unit=unit,
+            ),
+        ),
+        (InventoryPosition(component_sku="FRAME-001", on_hand=Decimal(on_hand), unit=unit),),
+    )
+    line = assessment.lines[0]
+    assert line.gross_required == Decimal(required)
+    assert line.available_to_promise == Decimal(available)
+    assert line.shortage == Decimal(shortage)
+    assert line.tentative_reservation == min(Decimal(required), Decimal(available))
+    rows = json.loads(inventory_assessment_detail(assessment).card_payload)["summary_rows"]
+    assert next(row["value"] for row in rows if row["label"] == "FRAME-001") == display
 
 
 def test_available_to_promise_protects_existing_reservations_and_safety_stock() -> None:

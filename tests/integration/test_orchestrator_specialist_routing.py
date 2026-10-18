@@ -10,7 +10,12 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 from uagents import Model, Protocol
-from uagents_core.contrib.protocols.chat import ChatMessage, MetadataContent, TextContent
+from uagents_core.contrib.protocols.chat import (
+    ChatAcknowledgement,
+    ChatMessage,
+    MetadataContent,
+    TextContent,
+)
 
 from supplymesh.agents.orchestration import (
     OrchestrationCoordinator,
@@ -125,6 +130,63 @@ def chat_selection(action: str, target_id: str, target_version: int) -> ChatMess
 
 
 @pytest.mark.asyncio
+async def test_sufficient_inventory_stays_visible_until_completion_is_requested() -> None:
+    engine, store, _ = repository()
+    workflow_id, correlation_id, request_id = uuid4(), uuid4(), uuid4()
+    store.start_inventory(
+        ConnectivitySession(
+            workflow_id=workflow_id,
+            conversation_id="agent1manager",
+            correlation_id=correlation_id,
+            request_message_id=request_id,
+            chat_message_id=uuid4(),
+            status="INVENTORY_PLANNING",
+        )
+    )
+    coordinator = OrchestrationCoordinator(
+        inventory_address="agent1inventory",
+        requests=Requests(),  # type: ignore[arg-type]
+        workflows=store,
+        transition_graph=build_event_transition_graph(),
+    )
+    report = InventoryShortageReport(
+        workflow_id=workflow_id,
+        correlation_id=correlation_id,
+        reply_to=str(request_id),
+        sender_agent="inventory-and-bom",
+        assessment=InventoryAssessment(
+            demand_order_id=workflow_id,
+            product_sku="MOTO-URBANX-2026",
+            demand_quantity=Decimal("10"),
+            required_by=date(2026, 12, 15),
+            lines=(),
+            has_shortages=False,
+            calculated_at=datetime.now(UTC),
+        ),
+        tentative_reservations=(),
+    )
+    context = Context()
+    await coordinator.complete_inventory(context, report)
+    assert len(context.sent) == 1
+    metadata = next(
+        content.metadata
+        for content in context.sent[0][1].content
+        if isinstance(content, MetadataContent)
+    )
+    payload = json.loads(metadata["card_payload"])
+    assert payload["title"] == "Inventory assessment"
+    assert payload["ctas"][0]["label"] == "View completion"
+    assert store.snapshot(workflow_id).status == "COMPLETED"
+    await coordinator.handle_selection(
+        context,
+        conversation_id="agent1manager",
+        selection=CardSelection.model_validate(payload["ctas"][0]["selection"]),
+    )
+    assert len(context.sent) == 2
+    engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_routes_all_specialists_and_completes_exact_ack() -> None:
     engine, store, sessions = repository()
     workflow_id = uuid4()
@@ -188,6 +250,39 @@ async def test_orchestrator_routes_all_specialists_and_completes_exact_ack() -> 
         "agent1inventory",
         InventoryShortageTransport.from_domain(inventory_report),
     )
+    assert not any(
+        isinstance(message, SourcingRequestTransport) for _, message in inventory_context.sent
+    )
+    inventory_card = next(
+        content.metadata
+        for _, message in inventory_context.sent
+        if isinstance(message, ChatMessage)
+        for content in message.content
+        if isinstance(content, MetadataContent)
+    )
+    assert inventory_card["is_terminal"] == "false"
+    payload = json.loads(inventory_card["card_payload"])
+    rows = {row["label"]: row["value"] for row in payload["summary_rows"]}
+    assert "shortage 55.5" in rows["ENGINE-001"]
+    selection = payload["ctas"][0]["selection"]
+    for conversation, version in (("agent1other", 1), ("agent1manager", 2)):
+        with pytest.raises(ValueError):
+            await coordinator.handle_selection(
+                Context(),
+                conversation_id=conversation,
+                selection=CardSelection.model_validate({**selection, "target_version": version}),
+            )
+    await handler(chat_protocol, ChatMessage)(
+        inventory_context,
+        "agent1manager",
+        ChatMessage(timestamp=datetime.now(UTC), content=[TextContent(text=json.dumps(selection))]),
+    )
+    with pytest.raises(ValueError, match="already started"):
+        await coordinator.handle_selection(
+            inventory_context,
+            conversation_id="agent1manager",
+            selection=CardSelection.model_validate(selection),
+        )
     sourcing_wire = next(
         message
         for _, message in inventory_context.sent
@@ -362,14 +457,90 @@ async def test_orchestrator_routes_all_specialists_and_completes_exact_ack() -> 
         for content in message.content
         if isinstance(content, MetadataContent)
         and content.metadata.get("card_kind") == "detail"
-        and json.loads(content.metadata["card_payload"]).get("title") == "Agent activity"
+        and json.loads(content.metadata["card_payload"]).get("title") == "Procurement complete"
     ]
-    assert activity_cards[0]["summary_rows"][0]["label"] == "inventory-and-bom"
+    assert len(activity_cards) == 1
+    activity_rows = {row["label"]: row["value"] for row in activity_cards[0]["summary_rows"]}
+    assert "InventoryShortageReport: RECEIVED" in activity_rows["Activity: Inventory"]
+    completion_messages = [
+        message for _, message in completion_context.sent if isinstance(message, ChatMessage)
+    ]
+    assert len(completion_messages) == 1
+    narration = next(
+        content.text
+        for content in completion_messages[0].content
+        if isinstance(content, TextContent)
+    )
+    assert activity_rows["Total"] in narration
     assert all(
         item["status"] == "DELIVERED" for item in completed.state["outbound_messages"].values()
     )
+    replay_context = Context()
+    await handler(chat_protocol, ChatMessage)(
+        replay_context,
+        "agent1manager",
+        ChatMessage(
+            timestamp=datetime.now(UTC),
+            content=[
+                TextContent(
+                    text=json.dumps({"action": "show_completion", "target_id": str(workflow_id)})
+                )
+            ],
+        ),
+    )
+    replayed_titles = [
+        json.loads(content.metadata["card_payload"])["title"]
+        for destination, message in replay_context.sent
+        if isinstance(message, ChatMessage) and destination == "agent1manager"
+        for content in message.content
+        if isinstance(content, MetadataContent)
+    ]
+    assert replayed_titles == ["Procurement complete"]
+    assert store.snapshot(workflow_id) == completed
+    assert all(
+        isinstance(message, (ChatMessage, ChatAcknowledgement))
+        for _, message in replay_context.sent
+    )
     with sessions() as session:
         assert session.scalar(select(func.count()).select_from(ApprovalDecisionRecord)) == 2
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "conversation", "include_target"),
+    [
+        ("COMPLETED", "agent1other", True),
+        ("WAITING_FOR_PO_APPROVAL", "agent1manager", True),
+        ("COMPLETED", "agent1manager", False),
+    ],
+)
+async def test_completion_replay_rejects_other_conversations_and_unfinished_workflows(
+    status: str, conversation: str, include_target: bool
+) -> None:
+    engine, store, sessions = repository()
+    workflow_id = uuid4()
+    with sessions() as session, session.begin():
+        session.add(
+            WorkflowRun(id=workflow_id, conversation_id="agent1manager", status=status, state={})
+        )
+    coordinator = OrchestrationCoordinator(
+        inventory_address="agent1inventory",
+        requests=Requests(),  # type: ignore[arg-type]
+        workflows=store,
+    )
+    before = store.snapshot(workflow_id)
+    context = Context()
+    with pytest.raises(ValueError):
+        await coordinator.handle_selection(
+            context,
+            conversation_id=conversation,
+            selection=CardSelection(
+                action="show_completion", target_id=str(workflow_id) if include_target else None
+            ),
+        )
+    assert context.sent == []
+    assert store.snapshot(workflow_id) == before
     engine.dispose()
 
 
@@ -462,6 +633,26 @@ async def test_conflict_counterproposal_routes_860_and_865_back_to_completion(
     )
     protocol = build_specialist_response_protocol(coordinator)
     context = Context()
+    before_review = store.snapshot(workflow_id)
+    review_context = Context()
+    await handler(build_chat_protocol(coordinator), ChatMessage)(
+        review_context,
+        "agent1manager",
+        ChatMessage(
+            timestamp=datetime.now(UTC),
+            content=[TextContent(text='{"action":"show_exception"}')],
+        ),
+    )
+    assert store.snapshot(workflow_id) == before_review
+    exception_payload = next(
+        json.loads(content.metadata["card_payload"])
+        for _, message in review_context.sent
+        if isinstance(message, ChatMessage)
+        for content in message.content
+        if isinstance(content, MetadataContent)
+    )
+    heading = exception_payload["root"]["children"][0]["value"]
+    assert po.supplier_id in heading and po.po_number in heading
     await coordinator.handle_selection(
         context,
         conversation_id="agent1manager",

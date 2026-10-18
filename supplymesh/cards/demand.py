@@ -22,7 +22,6 @@ def demand_intake_card() -> CardEnvelope:
         "form",
         {
             "title": "Manufacturing demand",
-            "subtitle": "Confirm the demand before inventory planning begins.",
             "fields": [
                 {"name": "product_sku", "label": "Product SKU", "kind": "text", "required": True},
                 {"name": "quantity", "label": "Quantity", "kind": "number", "required": True},

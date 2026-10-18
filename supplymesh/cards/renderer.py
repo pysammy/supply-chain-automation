@@ -2,6 +2,7 @@ import json
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from uagents_core.identity import is_valid_address
 
 MAX_CARD_PAYLOAD_BYTES = 64 * 1024
 CardKind = Literal["form", "carousel", "detail", "review", "custom"]
@@ -32,6 +33,11 @@ class CardSelection(BaseModel):
 def render_card(
     kind: CardKind, payload: dict[str, Any], *, informational: bool = False
 ) -> CardEnvelope:
+    if kind == "detail" and not payload.get("ctas"):
+        payload = {
+            **payload,
+            "ctas": [{"label": "Done", "selection": {"action": "dismiss_card"}}],
+        }
     serialized = json.dumps(payload, separators=(",", ":"), sort_keys=True, default=str)
     size = len(serialized.encode("utf-8"))
     if size > MAX_CARD_PAYLOAD_BYTES:
@@ -43,12 +49,28 @@ def render_card(
 
 def parse_card_selection(raw: str) -> CardSelection | None:
     """Strictly parse a direct card reply; ambiguity is represented by None."""
+    raw = raw.strip()
+    # Direct ASI:One replies can retain one leading recipient mention.
+    if raw.startswith("@"):
+        parts = raw.split(maxsplit=1)
+        if len(parts) != 2 or not is_valid_address(parts[0][1:]):
+            return None
+        raw = parts[1]
     try:
         value = json.loads(raw)
     except json.JSONDecodeError:
         return None
     if not isinstance(value, dict):
         return None
+    # This UI flag is not a workflow approval; explicit actions still require
+    # the existing target/version and workflow-state checks in the coordinator.
+    if "approved" in value:
+        approved = value.pop("approved")
+        if not isinstance(approved, bool):
+            return None
+        action = value.get("action")
+        if approved is False and isinstance(action, str) and action.startswith("approve"):
+            return None
     # ASI:One merges form inputs into the CTA selection at the top level.
     # Keep the existing nested format for saved messages and the CLI harness.
     fields = (

@@ -45,6 +45,7 @@ def _selection_message(value: dict[str, object]) -> ChatMessage:
 
 def _action(payload: dict[str, Any], action: str) -> dict[str, object]:
     candidates = [payload.get(key, {}) for key in ("approve_cta", "reject_cta", "submit_cta")]
+    candidates.extend(payload.get("ctas", []))
     candidates.extend(
         child.get("action", {})
         for child in payload.get("root", {}).get("children", [])
@@ -68,6 +69,9 @@ def _reply_for_card(payload: dict[str, Any]) -> dict[str, object] | None:
             "priority": "high",
             "currency": "USD",
         }
+    if title == "Inventory assessment":
+        ctas = payload.get("ctas", [])
+        return cast(dict[str, object], ctas[0]["selection"]) if ctas else None
     if title == "Procurement plans":
         split = next(
             (item for item in payload["items"] if item["title"].lower() == "split"),

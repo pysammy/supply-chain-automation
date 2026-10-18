@@ -42,10 +42,6 @@ def counterproposal_form(*, po_id: str, po_version: int) -> CardEnvelope:
         "form",
         {
             "title": "Supplier counterproposal",
-            "subtitle": (
-                "Leave fields blank to request original terms. "
-                "Multi-line orders require blank fields."
-            ),
             "fields": [
                 {"name": "quantity", "label": "Acceptable quantity", "kind": "number"},
                 {"name": "maximum_price", "label": "Maximum unit price", "kind": "number"},
