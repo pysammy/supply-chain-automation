@@ -44,32 +44,36 @@ def _selection_message(value: dict[str, object]) -> ChatMessage:
 
 
 def _action(payload: dict[str, Any], action: str) -> dict[str, object]:
-    for candidate in payload.get("actions", []):
-        value = candidate.get("value", {})
+    candidates = [payload.get(key, {}) for key in ("approve_cta", "reject_cta", "submit_cta")]
+    candidates.extend(
+        child.get("action", {})
+        for child in payload.get("root", {}).get("children", [])
+        if child.get("type") == "button"
+    )
+    for candidate in candidates:
+        value = candidate.get("selection", {})
         if value.get("action") == action:
             return cast(dict[str, object], value)
     raise RuntimeError(f"card does not offer expected action {action!r}")
 
 
 def _reply_for_card(payload: dict[str, Any]) -> dict[str, object] | None:
-    title = payload.get("title")
+    title = payload.get("title", payload.get("root", {}).get("title"))
     if title == "Manufacturing demand":
         return {
             "action": "submit_demand",
-            "values": {
-                "product_sku": "MOTO-URBANX-2026",
-                "quantity": 50,
-                "required_by": "2026-12-15",
-                "priority": "high",
-                "currency": "USD",
-            },
+            "product_sku": "MOTO-URBANX-2026",
+            "quantity": 50,
+            "required_by": "2026-12-15",
+            "priority": "high",
+            "currency": "USD",
         }
     if title == "Procurement plans":
         split = next(
             (item for item in payload["items"] if item["title"].lower() == "split"),
             payload["items"][0],
         )
-        return cast(dict[str, object], split["action"]["value"])
+        return cast(dict[str, object], split["primary_cta"]["selection"])
     if isinstance(title, str) and title.startswith("Approve ") and title.endswith(" plan"):
         return _action(payload, "approve_plan")
     if title == "Approve and send purchase orders":
@@ -77,13 +81,7 @@ def _reply_for_card(payload: dict[str, Any]) -> dict[str, object] | None:
     if title == "Supplier acknowledgment exception":
         return _action(payload, "counter")
     if title == "Supplier counterproposal":
-        target = payload["target"]
-        return {
-            "action": "review_counterproposal",
-            "target_id": target["id"],
-            "target_version": target["version"],
-            "values": {},
-        }
+        return _action(payload, "review_counterproposal")
     if title == "Approve supplier counterproposal":
         return _action(payload, "approve_counterproposal")
     return None
@@ -167,11 +165,14 @@ def main() -> None:
             if "card_payload" not in content.metadata:
                 continue
             payload = json.loads(content.metadata["card_payload"])
-            title = payload.get("title", "unknown")
+            title = payload.get("title", payload.get("root", {}).get("title", "unknown"))
             print(f"LOCAL_WORKFLOW_CARD={title}", flush=True)
             if title == "Procurement complete":
+                workflow_id = next(
+                    row["value"] for row in payload["summary_rows"] if row["label"] == "Workflow"
+                )
                 print(
-                    f"LOCAL_WORKFLOW_COMPLETE={payload['workflow_id']} scenario={args.scenario}",
+                    f"LOCAL_WORKFLOW_COMPLETE={workflow_id} scenario={args.scenario}",
                     flush=True,
                 )
                 if bureau is not None:

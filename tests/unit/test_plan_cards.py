@@ -33,5 +33,5 @@ def test_plan_cards_preserve_target_and_version() -> None:
     carousel = json.loads(procurement_plan_carousel((plan,)).card_payload)
     review = json.loads(plan_approval_review(plan, 3).card_payload)
     assert carousel["items"][0]["id"] == plan.plan_id
-    assert review["target"] == {"id": plan.plan_id, "version": 3}
-    assert review["actions"][0]["value"]["target_version"] == 3
+    assert review["approve_cta"]["selection"]["target_id"] == plan.plan_id
+    assert review["approve_cta"]["selection"]["target_version"] == 3

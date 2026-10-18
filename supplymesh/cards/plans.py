@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from supplymesh.cards.renderer import CardEnvelope, render_card
 from supplymesh.domain.sourcing import ProcurementPlan
 
@@ -11,17 +13,15 @@ def procurement_plan_carousel(plans: tuple[ProcurementPlan, ...]) -> CardEnvelop
                 {
                     "id": plan.plan_id,
                     "title": plan.name.replace("_", " ").title(),
-                    "summary": {
-                        "total_cost_minor": plan.total_cost_minor,
-                        "currency": plan.currency,
-                        "latest_arrival": plan.latest_arrival.isoformat(),
-                        "supplier_count": plan.supplier_count,
-                        "risk_score_basis_points": plan.risk_score_basis_points,
-                        "late_days": plan.total_late_days,
-                    },
-                    "action": {
+                    "subtitle": (
+                        f"Arrives {plan.latest_arrival}; {plan.supplier_count} supplier(s); "
+                        f"{plan.total_late_days} late days; "
+                        f"risk {plan.risk_score_basis_points}/10000"
+                    ),
+                    "secondary_text": f"{plan.currency} {Decimal(plan.total_cost_minor) / 100:.2f}",
+                    "primary_cta": {
                         "label": "Review plan",
-                        "value": {"action": "review_plan", "target_id": plan.plan_id},
+                        "selection": {"action": "review_plan", "target_id": plan.plan_id},
                     },
                 }
                 for plan in plans
@@ -31,26 +31,34 @@ def procurement_plan_carousel(plans: tuple[ProcurementPlan, ...]) -> CardEnvelop
 
 
 def plan_approval_review(plan: ProcurementPlan, version: int) -> CardEnvelope:
+    target = {"target_id": plan.plan_id, "target_version": version}
     return render_card(
         "review",
         {
             "title": f"Approve {plan.name.replace('_', ' ')} plan",
-            "target": {"id": plan.plan_id, "version": version},
-            "total_cost_minor": plan.total_cost_minor,
-            "currency": plan.currency,
-            "latest_arrival": plan.latest_arrival.isoformat(),
-            "allocations": [item.model_dump(mode="json") for item in plan.allocations],
-            "actions": [
+            "summary_rows": [
                 {
-                    "label": "Approve",
-                    "style": "primary",
-                    "value": {
-                        "action": "approve_plan",
-                        "target_id": plan.plan_id,
-                        "target_version": version,
-                    },
+                    "label": "Total",
+                    "value": f"{plan.currency} {Decimal(plan.total_cost_minor) / 100:.2f}",
                 },
-                {"label": "Reject", "value": {"action": "reject_plan", "target_id": plan.plan_id}},
+                {"label": "Latest arrival", "value": plan.latest_arrival.isoformat()},
+                *[
+                    {
+                        "label": item.component_sku,
+                        "value": (
+                            f"{item.quantity} from {item.supplier_id} at {plan.currency} "
+                            f"{Decimal(item.unit_price_minor) / 100:.2f}, "
+                            f"arriving {item.promised_date}"
+                        ),
+                    }
+                    for item in plan.allocations
+                ],
             ],
+            "approve_cta": {
+                "label": "Approve",
+                "primary": True,
+                "selection": {"action": "approve_plan", **target},
+            },
+            "reject_cta": {"label": "Reject", "selection": {"action": "reject_plan", **target}},
         },
     )

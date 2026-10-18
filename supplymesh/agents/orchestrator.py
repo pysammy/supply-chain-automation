@@ -169,7 +169,7 @@ def build_orchestrator_agent(
     if not seed.strip():
         raise ValueError("ORCHESTRATOR_AGENT_SEED must be configured")
     agent = Agent(
-        name="supplymesh-manufacturing-orchestrator",
+        name="supplymesh-orchestrator",
         seed=seed,
         port=port,
         mailbox=mailbox,

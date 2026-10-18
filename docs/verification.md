@@ -10,7 +10,7 @@ means the cited automated test or reproducible command passed; unchecked items a
 - [x] Ruff formatting and linting: `uv run ruff format --check . && uv run ruff check .`
 - [x] Strict typing for 45 agent/domain/persistence/protocol/service source files:
   `uv run --python 3.11 --isolated mypy`.
-- [x] Automated suite: 89 passed with `.venv/bin/python -m pytest -q`.
+- [x] Automated suite: 94 passed with `.venv/bin/python -m pytest -q`.
 - [x] Full `supplymesh` plus `apps` source coverage: 89% (`pytest-cov`).
 - [x] PostgreSQL migrations `0001`–`0007` upgrade, downgrade to base, and re-upgrade on a clean
   PostgreSQL 17 database.
@@ -61,8 +61,12 @@ means the cited automated test or reproducible command passed; unchecked items a
 - [x] Public Supplier chat allows quotation/capacity only; unauthorized tools and mismatched replies
   are rejected.
 - [x] Agent Chat Protocol 0.3.0 manifest and card metadata build against installed official models.
+- [x] All six runtime names validate against the installed SDK's Agentverse registration model
+  (32-character limit); seeds and address derivation are unchanged.
 - [x] Typed versioned specialist request/result models and in-process service adapters are covered.
-- [x] Intake, plan, approval, exception, completion, and activity card payloads exist and validate.
+- [x] Card builders use documented predefined schemas and custom element trees. Flat demand and
+  supplier form replies traverse message handlers; counterproposal target/version parsing is tested.
+  Live rendering remains unverified; see [manual card verification](card-verification.md).
 - [x] The Fetch.ai connectivity vertical slice sends a Pydantic-2-validated planning contract over
   uAgents wire models, protects existing reservations, rejects envelope tampering, and deduplicates
   repeated demand-card message IDs.

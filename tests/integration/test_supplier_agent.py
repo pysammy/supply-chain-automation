@@ -266,13 +266,17 @@ async def test_supplier_chat_inquiries_call_backend_but_cannot_order():
                     text=json.dumps(
                         {
                             "action": action,
-                            "values": {
-                                "operation": operation,
-                                "supplier_id": "supplier-alpha",
-                                "component_sku": "ENGINE-001",
-                                "quantity": 10,
-                                "required_by": "2026-12-01",
-                            },
+                            **(
+                                {
+                                    "operation": operation,
+                                    "supplier_id": "supplier-alpha",
+                                    "component_sku": "ENGINE-001",
+                                    "quantity": 10,
+                                    "required_by": "2026-12-01",
+                                }
+                                if action == "supplier_inquiry"
+                                else {}
+                            ),
                         }
                     )
                 )

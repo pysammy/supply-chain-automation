@@ -4,6 +4,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 MAX_CARD_PAYLOAD_BYTES = 64 * 1024
+CardKind = Literal["form", "carousel", "detail", "review", "custom"]
 
 
 class CardEnvelope(BaseModel):
@@ -11,8 +12,9 @@ class CardEnvelope(BaseModel):
 
     card_protocol_version: Literal["1"] = "1"
     requires_card_interaction: Literal["true", "false"] = "true"
-    card_kind: Literal["form", "carousel", "review", "custom"]
+    card_kind: CardKind
     card_payload: str
+    is_terminal: Literal["true", "false"] = "false"
 
     def metadata(self) -> dict[str, str]:
         return self.model_dump()
@@ -28,13 +30,15 @@ class CardSelection(BaseModel):
 
 
 def render_card(
-    kind: Literal["form", "carousel", "review", "custom"], payload: dict[str, Any]
+    kind: CardKind, payload: dict[str, Any], *, informational: bool = False
 ) -> CardEnvelope:
     serialized = json.dumps(payload, separators=(",", ":"), sort_keys=True, default=str)
     size = len(serialized.encode("utf-8"))
     if size > MAX_CARD_PAYLOAD_BYTES:
         raise ValueError(f"card payload is {size} bytes; maximum is {MAX_CARD_PAYLOAD_BYTES}")
-    return CardEnvelope(card_kind=kind, card_payload=serialized)
+    return CardEnvelope(
+        card_kind=kind, card_payload=serialized, is_terminal="true" if informational else "false"
+    )
 
 
 def parse_card_selection(raw: str) -> CardSelection | None:
@@ -45,6 +49,51 @@ def parse_card_selection(raw: str) -> CardSelection | None:
         return None
     if not isinstance(value, dict):
         return None
+    # ASI:One merges form inputs into the CTA selection at the top level.
+    # Keep the existing nested format for saved messages and the CLI harness.
+    fields = (
+        {
+            "submit_demand": {
+                "product_sku",
+                "quantity",
+                "required_by",
+                "priority",
+                "cost_ceiling_minor",
+                "currency",
+            },
+            "review_counterproposal": {"quantity", "maximum_price", "required_date", "note"},
+            "supplier_inquiry": {
+                "operation",
+                "supplier_id",
+                "component_sku",
+                "quantity",
+                "required_by",
+            },
+            "supplier_rfq": {
+                "operation",
+                "supplier_id",
+                "component_sku",
+                "quantity",
+                "required_by",
+            },
+            "supplier_capacity": {
+                "operation",
+                "supplier_id",
+                "component_sku",
+                "quantity",
+                "required_by",
+            },
+        }.get(value.get("action"))
+        if isinstance(value.get("action"), str)
+        else None
+    )
+    if fields is not None:
+        flat = {key: value[key] for key in fields if key in value}
+        if flat and "values" in value:
+            return None  # Two sources for form inputs are ambiguous.
+        if flat:
+            value = {key: item for key, item in value.items() if key not in fields}
+            value["values"] = {key: item for key, item in flat.items() if item not in (None, "")}
     try:
         return CardSelection.model_validate(value)
     except ValidationError:

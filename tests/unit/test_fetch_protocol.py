@@ -1,5 +1,6 @@
 from uagents import Model
 from uagents_core.contrib.protocols.chat import ChatMessage, chat_protocol_spec
+from uagents_core.registration import RegistrationRequest
 
 from supplymesh.agents.factory import AgentSeeds, build_company_agents
 from supplymesh.agents.orchestrator import build_chat_protocol, build_orchestrator_agent
@@ -31,6 +32,11 @@ def test_orchestrator_requires_a_stable_seed() -> None:
         assert "ORCHESTRATOR_AGENT_SEED" in str(exc)
     else:
         raise AssertionError("empty seed must be rejected")
+
+    agent = build_orchestrator_agent(
+        seed="standalone-registration-test", mailbox=False, publish_manifests=False
+    )
+    RegistrationRequest(address=agent.address, name=agent.name)
 
 
 def test_company_agents_publish_the_connectivity_slice_protocols() -> None:
@@ -87,6 +93,9 @@ def test_company_agents_publish_the_connectivity_slice_protocols() -> None:
     )
 
     assert len({agent.address for agent in agents}) == 6
+    for agent in agents:
+        registration = RegistrationRequest(address=agent.address, name=agent.name)
+        assert registration.name == agent.name
     chat_digest = Model.build_schema_digest(ChatMessage)
     assert supplier.get_message_protocol(chat_digest) is not None
     for internal in (inventory, sourcing, procurement, acknowledgment):

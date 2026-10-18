@@ -4,14 +4,26 @@ from supplymesh.domain.models import InventoryAssessment
 
 def inventory_assessment_detail(assessment: InventoryAssessment) -> CardEnvelope:
     return render_card(
-        "custom",
+        "detail",
         {
             "title": "Inventory assessment",
-            "demand_order_id": str(assessment.demand_order_id),
-            "product_sku": assessment.product_sku,
-            "demand_quantity": str(assessment.demand_quantity),
-            "required_by": assessment.required_by.isoformat(),
-            "has_shortages": assessment.has_shortages,
-            "components": [line.model_dump(mode="json") for line in assessment.lines],
+            "summary_rows": [
+                {"label": "Product", "value": assessment.product_sku},
+                {"label": "Demand quantity", "value": str(assessment.demand_quantity)},
+                {"label": "Required by", "value": assessment.required_by.isoformat()},
+                {"label": "Shortages", "value": "Yes" if assessment.has_shortages else "No"},
+                *[
+                    {
+                        "label": line.component_sku,
+                        "value": (
+                            f"Required {line.gross_required}; ATP {line.available_to_promise}; "
+                            f"reserved {line.tentative_reservation}; shortage {line.shortage}. "
+                        )
+                        + "; ".join(line.evidence),
+                    }
+                    for line in assessment.lines
+                ],
+            ],
         },
+        informational=True,
     )

@@ -30,7 +30,10 @@ def test_required_detail_and_form_cards_are_versioned_and_structured() -> None:
         has_shortages=True,
         calculated_at=datetime(2026, 10, 16, tzinfo=UTC),
     )
-    assert json.loads(inventory_assessment_detail(assessment).card_payload)["has_shortages"]
+    assert {
+        row["label"]: row["value"]
+        for row in json.loads(inventory_assessment_detail(assessment).card_payload)["summary_rows"]
+    }["Shortages"] == "Yes"
     po = PurchaseOrder(
         po_id=uuid4(),
         po_number="PO-1",
@@ -50,14 +53,14 @@ def test_required_detail_and_form_cards_are_versioned_and_structured() -> None:
         total=Decimal("45100"),
     )
     po_card = json.loads(purchase_order_detail(po).card_payload)
-    assert po_card["target"]["version"] == 2
+    assert po_card["approve_cta"]["selection"]["target_version"] == 2
     assert (
-        json.loads(counterproposal_form(po_id=str(po.po_id), po_version=2).card_payload)["submit"][
-            "action"
-        ]
+        json.loads(counterproposal_form(po_id=str(po.po_id), po_version=2).card_payload)[
+            "submit_cta"
+        ]["selection"]["action"]
         == "review_counterproposal"
     )
-    assert json.loads(
+    completion = json.loads(
         completion_detail(
             workflow_id=str(po.workflow_id),
             total_cost_minor=4_510_000,
@@ -66,10 +69,13 @@ def test_required_detail_and_form_cards_are_versioned_and_structured() -> None:
             commitments=[],
             audit_references=["audit-1"],
         ).card_payload
-    )["target_feasible"]
+    )
+    assert {row["label"]: row["value"] for row in completion["summary_rows"]}[
+        "Manufacturing target feasible"
+    ] == "Yes"
     assert (
         json.loads(
             agent_activity_detail([{"agent": "inventory", "outcome": "shortage"}]).card_payload
-        )["activities"][0]["agent"]
+        )["summary_rows"][0]["label"]
         == "inventory"
     )

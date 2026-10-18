@@ -361,10 +361,10 @@ async def test_orchestrator_routes_all_specialists_and_completes_exact_ack() -> 
         if isinstance(message, ChatMessage)
         for content in message.content
         if isinstance(content, MetadataContent)
-        and content.metadata.get("card_kind") == "custom"
+        and content.metadata.get("card_kind") == "detail"
         and json.loads(content.metadata["card_payload"]).get("title") == "Agent activity"
     ]
-    assert activity_cards[0]["activities"][0]["agent"] == "inventory-and-bom"
+    assert activity_cards[0]["summary_rows"][0]["label"] == "inventory-and-bom"
     assert all(
         item["status"] == "DELIVERED" for item in completed.state["outbound_messages"].values()
     )
@@ -572,8 +572,9 @@ async def test_conflict_counterproposal_routes_860_and_865_back_to_completion(
         if isinstance(content, MetadataContent)
         and json.loads(content.metadata["card_payload"])["title"] == "Procurement complete"
     )
-    assert completion["total_cost_minor"] == (113750 if another_conflict else 57750)
-    assert completion["target_feasible"] is (not another_conflict)
+    rows = {row["label"]: row["value"] for row in completion["summary_rows"]}
+    assert rows["Total"] == ("USD 1137.50" if another_conflict else "USD 577.50")
+    assert rows["Manufacturing target feasible"] == ("No" if another_conflict else "Yes")
     engine.dispose()
 
 

@@ -1,0 +1,197 @@
+[
+  {
+    "card_kind": "form",
+    "card_payload": {
+      "fields": [
+        {
+          "kind": "text",
+          "label": "Product SKU",
+          "name": "product_sku",
+          "required": true
+        },
+        {
+          "kind": "number",
+          "label": "Quantity",
+          "name": "quantity",
+          "required": true
+        },
+        {
+          "kind": "text",
+          "label": "Required by (YYYY-MM-DD)",
+          "name": "required_by",
+          "required": true
+        },
+        {
+          "kind": "select",
+          "label": "Priority",
+          "name": "priority",
+          "options": [
+            {
+              "label": "Normal",
+              "value": "normal"
+            },
+            {
+              "label": "High",
+              "value": "high"
+            },
+            {
+              "label": "Rush",
+              "value": "rush"
+            }
+          ],
+          "required": true
+        },
+        {
+          "kind": "number",
+          "label": "Cost ceiling",
+          "name": "cost_ceiling_minor"
+        }
+      ],
+      "submit_cta": {
+        "label": "Assess inventory",
+        "selection": {
+          "action": "submit_demand"
+        }
+      },
+      "subtitle": "Confirm the demand before inventory planning begins.",
+      "title": "Manufacturing demand"
+    }
+  },
+  {
+    "card_kind": "carousel",
+    "card_payload": {
+      "items": [
+        {
+          "id": "balanced-1",
+          "primary_cta": {
+            "label": "Review plan",
+            "selection": {
+              "action": "review_plan",
+              "target_id": "balanced-1"
+            }
+          },
+          "secondary_text": "USD 61500.00",
+          "subtitle": "Arrives 2026-11-20; 1 supplier(s); 0 late days; risk 600/10000",
+          "title": "Balanced"
+        }
+      ],
+      "title": "Procurement plans"
+    }
+  },
+  {
+    "card_kind": "review",
+    "card_payload": {
+      "approve_cta": {
+        "label": "Approve",
+        "primary": true,
+        "selection": {
+          "action": "approve_plan",
+          "target_id": "balanced-1",
+          "target_version": 3
+        }
+      },
+      "reject_cta": {
+        "label": "Reject",
+        "selection": {
+          "action": "reject_plan",
+          "target_id": "balanced-1",
+          "target_version": 3
+        }
+      },
+      "summary_rows": [
+        {
+          "label": "Total",
+          "value": "USD 61500.00"
+        },
+        {
+          "label": "Latest arrival",
+          "value": "2026-11-20"
+        },
+        {
+          "label": "ENGINE-001",
+          "value": "75 from supplier-alpha at USD 820.00, arriving 2026-11-20"
+        }
+      ],
+      "title": "Approve balanced plan"
+    }
+  },
+  {
+    "card_kind": "detail",
+    "card_payload": {
+      "summary_rows": [
+        {
+          "label": "Workflow",
+          "value": "sample-workflow"
+        },
+        {
+          "label": "Total",
+          "value": "USD 61500.00"
+        },
+        {
+          "label": "Manufacturing target feasible",
+          "value": "Yes"
+        },
+        {
+          "label": "Audit references",
+          "value": "None"
+        }
+      ],
+      "title": "Procurement complete"
+    }
+  },
+  {
+    "card_kind": "custom",
+    "card_payload": {
+      "root": {
+        "children": [
+          {
+            "type": "text",
+            "value": "Status: EXCEPTION. Recommended action: counter."
+          },
+          {
+            "type": "text",
+            "value": "Cost change: 100 (1%). Unfulfilled quantity: 0. Production units affected: 0. Schedule delay: 1 days."
+          },
+          {
+            "action": {
+              "selection": {
+                "action": "accept",
+                "target_id": "sample-po",
+                "target_version": 2
+              }
+            },
+            "label": "Accept",
+            "primary": false,
+            "type": "button"
+          },
+          {
+            "action": {
+              "selection": {
+                "action": "counter",
+                "target_id": "sample-po",
+                "target_version": 2
+              }
+            },
+            "label": "Counter",
+            "primary": true,
+            "type": "button"
+          },
+          {
+            "action": {
+              "selection": {
+                "action": "cancel",
+                "target_id": "sample-po",
+                "target_version": 2
+              }
+            },
+            "label": "Cancel",
+            "primary": false,
+            "type": "button"
+          }
+        ],
+        "title": "Supplier acknowledgment exception",
+        "type": "section"
+      }
+    }
+  }
+]

@@ -273,30 +273,42 @@ def build_supplier_chat_protocol(service: SupplierAgentService) -> Protocol:
         "form",
         {
             "title": "Supplier quotations and capacity",
-            "description": (
+            "subtitle": (
                 "Choose a supplier and request capacity or a quotation. Orders "
                 "require the manufacturing Orchestrator's approval workflow."
             ),
             "fields": [
                 {
-                    "id": "operation",
+                    "name": "operation",
                     "label": "Inquiry",
-                    "type": "select",
-                    "options": ["rfq", "capacity"],
+                    "kind": "select",
+                    "options": [
+                        {"value": "rfq", "label": "Quotation"},
+                        {"value": "capacity", "label": "Capacity"},
+                    ],
                     "required": True,
                 },
                 {
-                    "id": "supplier_id",
+                    "name": "supplier_id",
                     "label": "Supplier",
-                    "type": "select",
-                    "options": list(service.supplier_ids),
+                    "kind": "select",
+                    "options": [{"value": item, "label": item} for item in service.supplier_ids],
                     "required": True,
                 },
-                {"id": "component_sku", "label": "Component SKU", "type": "text", "required": True},
-                {"id": "quantity", "label": "Quantity (for quotations)", "type": "number"},
-                {"id": "required_by", "label": "Required by (for quotations)", "type": "date"},
+                {
+                    "name": "component_sku",
+                    "label": "Component SKU",
+                    "kind": "text",
+                    "required": True,
+                },
+                {"name": "quantity", "label": "Quantity (for quotations)", "kind": "number"},
+                {
+                    "name": "required_by",
+                    "label": "Required by (YYYY-MM-DD, for quotations)",
+                    "kind": "text",
+                },
             ],
-            "submit": {"label": "Send inquiry", "action": "supplier_inquiry"},
+            "submit_cta": {"label": "Send inquiry", "selection": {"action": "supplier_inquiry"}},
         },
     )
 

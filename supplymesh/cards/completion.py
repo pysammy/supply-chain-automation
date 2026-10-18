@@ -1,3 +1,4 @@
+from decimal import Decimal
 from typing import Any
 
 from supplymesh.cards.renderer import CardEnvelope, render_card
@@ -13,21 +14,45 @@ def completion_detail(
     audit_references: list[str],
 ) -> CardEnvelope:
     return render_card(
-        "custom",
+        "detail",
         {
             "title": "Procurement complete",
-            "workflow_id": workflow_id,
-            "total_cost_minor": total_cost_minor,
-            "currency": currency,
-            "target_feasible": target_feasible,
-            "commitments": commitments,
-            "audit_references": audit_references,
+            "summary_rows": [
+                {"label": "Workflow", "value": workflow_id},
+                {"label": "Total", "value": f"{currency} {Decimal(total_cost_minor) / 100:.2f}"},
+                {
+                    "label": "Manufacturing target feasible",
+                    "value": "Yes" if target_feasible else "No",
+                },
+                *[
+                    {
+                        "label": str(item["po_number"]),
+                        "value": (
+                            f"{item['supplier_id']}: {currency} {item['total']}; "
+                            f"arrival {item.get('latest_arrival', 'not provided')}"
+                        ),
+                    }
+                    for item in commitments
+                ],
+                {"label": "Audit references", "value": ", ".join(audit_references) or "None"},
+            ],
         },
+        informational=True,
     )
 
 
 def agent_activity_detail(activities: list[dict[str, Any]]) -> CardEnvelope:
     return render_card(
-        "custom",
-        {"title": "Agent activity", "activities": activities},
+        "detail",
+        {
+            "title": "Agent activity",
+            "summary_rows": [
+                {
+                    "label": str(item.get("agent", "Agent")),
+                    "value": f"{item.get('action', '')}: {item.get('outcome', '')}",
+                }
+                for item in activities
+            ],
+        },
+        informational=True,
     )

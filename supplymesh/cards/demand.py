@@ -22,20 +22,28 @@ def demand_intake_card() -> CardEnvelope:
         "form",
         {
             "title": "Manufacturing demand",
-            "description": "Confirm the demand before inventory planning begins.",
+            "subtitle": "Confirm the demand before inventory planning begins.",
             "fields": [
-                {"id": "product_sku", "label": "Product SKU", "type": "text", "required": True},
-                {"id": "quantity", "label": "Quantity", "type": "number", "required": True},
-                {"id": "required_by", "label": "Required by", "type": "date", "required": True},
+                {"name": "product_sku", "label": "Product SKU", "kind": "text", "required": True},
+                {"name": "quantity", "label": "Quantity", "kind": "number", "required": True},
                 {
-                    "id": "priority",
-                    "label": "Priority",
-                    "type": "select",
-                    "options": ["normal", "high", "rush"],
+                    "name": "required_by",
+                    "label": "Required by (YYYY-MM-DD)",
+                    "kind": "text",
                     "required": True,
                 },
-                {"id": "cost_ceiling_minor", "label": "Cost ceiling", "type": "number"},
+                {
+                    "name": "priority",
+                    "label": "Priority",
+                    "kind": "select",
+                    "options": [
+                        {"value": item, "label": item.title()}
+                        for item in ("normal", "high", "rush")
+                    ],
+                    "required": True,
+                },
+                {"name": "cost_ceiling_minor", "label": "Cost ceiling", "kind": "number"},
             ],
-            "submit": {"label": "Assess inventory", "action": "submit_demand"},
+            "submit_cta": {"label": "Assess inventory", "selection": {"action": "submit_demand"}},
         },
     )

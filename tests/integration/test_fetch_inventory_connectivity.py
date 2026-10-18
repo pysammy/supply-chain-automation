@@ -148,13 +148,11 @@ async def test_card_submission_reaches_inventory_agent_and_returns_assessment_ca
     card_reply = json.dumps(
         {
             "action": "submit_demand",
-            "values": {
-                "product_sku": "MOTO-URBANX-2026",
-                "quantity": 75,
-                "required_by": "2026-12-01",
-                "priority": "rush",
-                "currency": "USD",
-            },
+            "product_sku": "MOTO-URBANX-2026",
+            "quantity": 75,
+            "required_by": "2026-12-01",
+            "priority": "rush",
+            "currency": "USD",
         }
     )
     incoming = ChatMessage(
@@ -191,10 +189,10 @@ async def test_card_submission_reaches_inventory_agent_and_returns_assessment_ca
         item.metadata for item in chat_response.content if isinstance(item, MetadataContent)
     )
     payload = json.loads(metadata["card_payload"])
-    assert payload["has_shortages"] is True
-    engine = payload["components"][0]
-    assert engine["available_to_promise"] == "20"
-    assert engine["shortage"] == "55"
+    rows = {row["label"]: row["value"] for row in payload["summary_rows"]}
+    assert rows["Shortages"] == "Yes"
+    assert "ATP 20" in rows["ENGINE-001"]
+    assert "shortage 55" in rows["ENGINE-001"]
     assert store.results[request.workflow_id]["has_shortages"] is True
 
     duplicate_context = FakeContext()

@@ -89,7 +89,7 @@ def build_company_agents(
     seeds.validate()
     descriptions = {
         "orchestrator": (
-            "manufacturing-orchestrator",
+            "orchestrator",
             (
                 "Manufacturing procurement: BOM, shortages, sourcing, human-"
                 "approved purchase orders and X12 acknowledgments. Start here for "
@@ -120,7 +120,7 @@ def build_company_agents(
             ),
         ),
         "acknowledgment": (
-            "acknowledgment-exception",
+            "acknowledgment",
             (
                 "Internal specialist: validates supplier acknowledgments and "
                 "exceptions. Called only by the manufacturing Orchestrator."
